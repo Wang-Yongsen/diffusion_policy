@@ -1,65 +1,87 @@
 name: robodiff
+# Ubuntu 22.04 x86_64 / NVIDIA RTX PRO 6000 Blackwell (sm_120).
+# Requires a working NVIDIA driver supporting CUDA 12.9 (this host uses R580).
+# System packages: build-essential libosmesa6-dev libgl1 libglx-mesa0 libglfw3 patchelf
 channels:
-  - pytorch
-  - pytorch3d
-  - nvidia
   - conda-forge
+  - nodefaults
 dependencies:
-  - python=3.9
-  - pip=22.2.2
-  - cudatoolkit=11.6
-  - pytorch=1.12.1
-  - torchvision=0.13.1
-  - pytorch3d=0.7.0
-  - numpy=1.23.3
-  - numba==0.56.4
-  - scipy==1.9.1
-  - py-opencv=4.6.0
-  - cffi=1.15.1
-  - ipykernel=6.16
-  - matplotlib=3.6.1
-  - zarr=2.12.0
-  - numcodecs=0.10.2
-  - h5py=3.7.0
-  - hydra-core=1.2.0
-  - einops=0.4.1
-  - tqdm=4.64.1
-  - dill=0.3.5.1
-  - scikit-video=1.1.11
-  - scikit-image=0.19.3
+  - python=3.10
+  # Keep legacy setup.py support for the simulation packages.
+  - pip=24.0
+  - setuptools=65.5.0
+  - wheel=0.38.4
+  # Use matching conda-forge GPU binaries, including PyTorch3D; no source build.
+  - cuda-version=12.9
+  - pytorch=2.7.1=cuda129*
+  - torchvision=0.22.1=cuda*
+  - pytorch3d=0.7.7=cuda129*
+  # Numba 0.56 requires NumPy <1.24; this also retains legacy NumPy aliases.
+  - numpy=1.23.5
+  # Keep the Gym 0.21 API, using its prebuilt Conda package.
   - gym=0.21.0
-  - pymunk=6.2.1
-  - wandb=0.13.3
-  - threadpoolctl=3.1.0
-  - shapely=1.8.4
   - cython=0.29.32
-  - imageio=2.22.0
-  - imageio-ffmpeg=0.4.7
-  - termcolor=2.0.1
-  - tensorboard=2.10.1
-  - tensorboardx=2.5.1
-  - psutil=5.9.2
-  - click=8.0.4
-  - boto3=1.24.96
-  - accelerate=0.13.2
-  - datasets=2.6.1
-  - diffusers=0.11.1
-  - av=10.0.0
   - cmake=3.24.3
-  # trick to avoid cpu affinity issue described in https://github.com/pytorch/pytorch/issues/99625
-  - llvm-openmp=14
-  # trick to force reinstall imagecodecs via pip
-  - imagecodecs==2022.8.8
+  # Pip wheels keep legacy OpenCV/PyAV/Protobuf separate from new libtorch's
+  # native library dependencies. Repeat shared versions to prevent pip upgrades.
   - pip:
+    - torch==2.7.1
+    - torchvision==0.22.1
+    - numpy==1.23.5
+    - gym==0.21.0
+    - numba==0.56.4
+    - scipy==1.9.1
+    - opencv-python==4.6.0.66
+    - cffi==1.15.1
+    - ipykernel==6.16.2
+    - matplotlib==3.6.1
+    - zarr==2.12.0
+    - numcodecs==0.10.2
+    - h5py==3.7.0
+    - hydra-core==1.2.0
+    - einops==0.4.1
+    - tqdm==4.64.1
+    - dill==0.3.5.1
+    - scikit-video==1.1.11
+    - scikit-image==0.19.3
+    - pymunk==6.2.1
+    # 0.22.3 is the first release that accepts wandb_v1_ API keys.
+    # Later releases require protobuf>=5 and pydantic>=2.
+    - wandb==0.22.3
+    - threadpoolctl==3.1.0
+    - shapely==1.8.4
+    - imageio==2.22.0
+    - imageio-ffmpeg==0.4.7
+    - termcolor==2.0.1
+    - tensorboard==2.10.1
+    - tensorboardx==2.5.1
+    - psutil==5.9.2
+    - click==8.0.4
+    - boto3==1.24.96
+    - accelerate==0.13.2
+    - datasets==2.6.1
+    - diffusers==0.11.1
+    # diffusers 0.11 uses cached_download, removed in huggingface-hub 0.26.
+    - huggingface-hub==0.25.2
+    # Preserve interfaces used by datasets 2.6 and TensorBoard/Ray.
+    - pyarrow==10.0.1
+    - fsspec==2023.6.0
+    - protobuf==3.19.6
+    - pandas==1.5.3
+    - pydantic==1.10.13
+    # PyAV 10 has no PyPI wheels; use a wheel with bundled FFmpeg libraries.
+    - av==12.3.0
     - ray[default,tune]==2.2.0
-    # requires mujoco py dependencies libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf
     - free-mujoco-py==2.1.6
     - pygame==2.1.2
     - pybullet-svl==3.1.6.4
-    - robosuite @ https://github.com/cheng-chi/robosuite/archive/277ab9588ad7a4f4b55cf75508b44aa67ec171f0.tar.gz
+    # robosuite 1.2.0 pins numba<=0.53.1, which has no Python 3.10 build.
+    # Its other requirements are already pinned above. Install after env creation:
+    #   pip install --no-deps "robosuite @ https://github.com/cheng-chi/robosuite/archive/277ab9588ad7a4f4b55cf75508b44aa67ec171f0.tar.gz"
     - robomimic==0.2.0
     - pytorchvideo==0.1.5
-    # pip package required for jpeg-xl
+    # Pip package required for JPEG-XL; avoid a second Conda imagecodecs install.
     - imagecodecs==2022.9.26
     - r3m @ https://github.com/facebookresearch/r3m/archive/b2334e726887fa0206962d7984c69c5fb09cceab.tar.gz
     - dm-control==1.0.9
+    - mujoco==2.3.1.post1
