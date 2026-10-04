@@ -59,12 +59,18 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             'scan': []
         }
         obs_key_shapes = dict()
+        if not 1 <= n_obs_steps <= horizon or not 1 <= n_action_steps <= horizon - n_obs_steps + 1:
+            raise ValueError("Observation and action steps must fit inside horizon")
+        if crop_shape is not None and (len(crop_shape) != 2 or any(not isinstance(x, int) or isinstance(x, bool) or x <= 0 for x in crop_shape)):
+            raise ValueError("crop_shape must be null or positive [height,width] integers")
         for key, attr in obs_shape_meta.items():
             shape = attr['shape']
             obs_key_shapes[key] = list(shape)
 
             type = attr.get('type', 'low_dim')
             if type == 'rgb':
+                if crop_shape is not None and any(c >= s for c, s in zip(crop_shape, shape[1:])):
+                    raise ValueError(f"crop_shape must be smaller than {key} image shape {shape}")
                 obs_config['rgb'].append(key)
             elif type == 'low_dim':
                 obs_config['low_dim'].append(key)

@@ -1,0 +1,27 @@
+# 此配置对应 recordings/20260924_204339_afdb5a7a，从 session 目录执行转换。
+# 修复参数作用和建议与 bimanual-teleop/configs/recording_conversion.yaml 一致。
+# 换一条采集记录时使用通用配置，并重新复核暂停；不要复制本记录的复核结论。
+# repair 启用固定网格与短缺口修复；strict 保留原转换方式和原阈值。
+mode: repair
+# 输出网格 Hz；默认30，改变后重新生成数据并核对窗口对应秒数。
+target_fps: 30
+# 连续未匹配图像最多修复点数；0关闭，默认2；提高前检查旧图像年龄。
+max_missing_camera_frames: 2
+# 图像正常匹配容差 ms；默认20，提高会放宽同步精度。
+camera_match_tolerance_ms: 20
+# 实测状态插值最大两端间隔 ms；默认100，不跨暂停，调大需核对动态误差。
+max_state_interp_gap_ms: 100
+# 已提交过去目标最大年龄 ms；默认50，过期指令不能靠压缩时间变有效。
+max_command_age_ms: 50
+# checked_compress 只合并明确复核通过的接缝；keep 始终保留暂停边界。
+pause_policy: checked_compress
+# 相机来源时间偏移突变阈值 ms；需高于时钟抖动、低于要检测的暂停，默认100。
+pause_offset_tolerance_ms: 100
+# 按来源演示名和暂停后的主相机原始帧索引记录复核。
+pause_reviews:
+  episode_000000:
+    1341:
+      # false保留边界；true仅在实测状态、绝对目标和场景连续性确认后使用。
+      merge: false
+      # 保存可追溯依据；不能只凭相近的两张图假定整个暂停静止。
+      reason: "三路图像抓持场景接近；但暂停约2.78秒没有完整状态记录，左臂实测端点位移约16.8mm、请求目标变化约36.6mm，无法确认压缩成一个30Hz训练步的衔接，保留边界。"

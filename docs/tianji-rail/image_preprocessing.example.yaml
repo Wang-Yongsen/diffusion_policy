@@ -1,0 +1,32 @@
+# 导轨图像处理参数摘录，已接入 Dataset 和 Policy，并通过开关/尺寸验证。
+# 这不是完整训练配置；实际修改 task/tianji_rail_image.yaml 的 task 参数，
+# 或 train_diffusion_transformer_tianji_rail_workspace.yaml 的 policy 参数。
+task:
+  # Dataset 输出图像尺寸，顺序为 [通道数, 高度, 宽度]。
+  # 默认 [3,240,320]；显存不足可减小高宽，但应抽查导轨和手指细节是否清晰。
+  # 关闭缩放时须改为原图尺寸；首版三路相机共用输出尺寸，原图尺寸需一致。
+  # Dataset、Runner 和 shape_meta 均引用此尺寸，避免多处手动修改。
+  image_shape: [3, 240, 320]
+  dataset:
+    # true：将 RGB 缩放到 image_shape 的高宽；false：保留原图尺寸。
+    # 建议首次训练保持 true；关闭后显存和读取开销可能明显增加。
+    resize_enabled: true
+    # 缩放插值方式，支持 area / bilinear / nearest。
+    # area 适合缩小，bilinear 适合放大或一般缩放；nearest 通常不推荐用于 RGB。
+    # 缩放关闭时此参数不执行；不额外进行第二次缩放。
+    resize_interpolation: area
+    # 与 task.image_shape 共用同一来源，勿独立设置成不同尺寸。
+    image_shape: ${task.image_shape}
+policy:
+  # null：关闭视觉编码器裁剪；[高,宽]：启用训练时随机裁剪。
+  # 输入 240×320 时可设 [216,288]，但应确认不会裁掉导轨或操作中的手。
+  # 当前实现要求两个维度都严格小于 Dataset 输出尺寸。
+  # 建议先用 null 建立基线，再单独开启裁剪比较效果。
+  crop_shape: null
+  # true：启用裁剪时，验证和评估使用固定中心裁剪，便于重复比较。
+  # false：沿用 robomimic CropRandomizer 行为，评估可能随机裁剪。
+  # 建议保持 true；crop_shape 为 null 时此项不产生裁剪。
+  eval_fixed_crop: true
+  # true：将视觉编码器 BatchNorm 替换为 GroupNorm。
+  # 当前训练使用 EMA 且 batch 较小，建议保持 true。
+  obs_encoder_group_norm: true

@@ -19,6 +19,7 @@ import wandb
 import tqdm
 import numpy as np
 import shutil
+import math
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.diffusion_transformer_hybrid_image_policy import DiffusionTransformerHybridImagePolicy
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
@@ -59,6 +60,16 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
+        if cfg.training.debug:
+            cfg.training.num_epochs = 2
+            cfg.training.max_train_steps = 3
+            cfg.training.max_val_steps = 3
+            cfg.training.rollout_every = 1
+            cfg.training.checkpoint_every = 1
+            cfg.training.val_every = 1
+            cfg.training.sample_every = 1
+        if cfg.training.gradient_accumulate_every < 1:
+            raise ValueError("gradient_accumulate_every must be positive")
 
         # resume training
         if cfg.training.resume:
@@ -77,22 +88,28 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
         # configure validation dataset
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+        if len(val_dataset) == 0 and cfg.checkpoint.topk.monitor_key == 'val_loss':
+            raise ValueError("Cannot monitor val_loss with an empty validation dataset")
 
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
 
         # configure lr scheduler
+        train_batches = len(train_dataloader)
+        if cfg.training.max_train_steps is not None:
+            train_batches = min(train_batches, cfg.training.max_train_steps)
+        if train_batches < 1:
+            raise ValueError("Training requires at least one batch")
+        updates_per_epoch = math.ceil(train_batches / cfg.training.gradient_accumulate_every)
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=self.optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=(
-                len(train_dataloader) * cfg.training.num_epochs) \
-                    // cfg.training.gradient_accumulate_every,
+            num_training_steps=updates_per_epoch * cfg.training.num_epochs,
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
-            last_epoch=self.global_step-1
+            last_epoch=self.epoch * updates_per_epoch - 1
         )
 
         # configure ema
@@ -101,6 +118,7 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
             ema = hydra.utils.instantiate(
                 cfg.ema,
                 model=self.ema_model)
+            ema.optimization_step = self.epoch * updates_per_epoch
 
         # configure env
         env_runner: BaseImageRunner
@@ -137,22 +155,14 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
         # save batch for sampling
         train_sampling_batch = None
 
-        if cfg.training.debug:
-            cfg.training.num_epochs = 2
-            cfg.training.max_train_steps = 3
-            cfg.training.max_val_steps = 3
-            cfg.training.rollout_every = 1
-            cfg.training.checkpoint_every = 1
-            cfg.training.val_every = 1
-            cfg.training.sample_every = 1
-
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as json_logger:
-            for local_epoch_idx in range(cfg.training.num_epochs):
+            for local_epoch_idx in range(self.epoch, cfg.training.num_epochs):
                 step_log = dict()
                 # ========= train for this epoch ==========
                 train_losses = list()
+                self.optimizer.zero_grad()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
@@ -163,18 +173,20 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
 
                         # compute loss
                         raw_loss = self.model.compute_loss(batch)
-                        loss = raw_loss / cfg.training.gradient_accumulate_every
+                        if not torch.isfinite(raw_loss):
+                            raise FloatingPointError("Nonfinite training loss")
+                        accumulation = cfg.training.gradient_accumulate_every
+                        group_start = (batch_idx // accumulation) * accumulation
+                        loss = raw_loss / min(accumulation, train_batches - group_start)
                         loss.backward()
 
                         # step optimizer
-                        if self.global_step % cfg.training.gradient_accumulate_every == 0:
+                        if (batch_idx + 1) % accumulation == 0 or batch_idx + 1 == train_batches:
                             self.optimizer.step()
                             self.optimizer.zero_grad()
                             lr_scheduler.step()
-                        
-                        # update ema
-                        if cfg.training.use_ema:
-                            ema.step(self.model)
+                            if cfg.training.use_ema:
+                                ema.step(self.model)
 
                         # logging
                         raw_loss_cpu = raw_loss.item()
@@ -187,7 +199,7 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                             'lr': lr_scheduler.get_last_lr()[0]
                         }
 
-                        is_last_batch = (batch_idx == (len(train_dataloader)-1))
+                        is_last_batch = (batch_idx == train_batches - 1)
                         if not is_last_batch:
                             # log of last step is combined with validation and rollout
                             wandb_run.log(step_log, step=self.global_step)
@@ -253,7 +265,12 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                         del mse
                 
                 # checkpoint
-                if (self.epoch % cfg.training.checkpoint_every) == 0:
+                # Persist the next epoch and exact completed-batch count so resume
+                # does not repeat a finished epoch or run num_epochs extra epochs.
+                completed_epoch = self.epoch
+                self.global_step += 1
+                self.epoch += 1
+                if (completed_epoch % cfg.training.checkpoint_every) == 0:
                     # checkpointing
                     if cfg.checkpoint.save_last_ckpt:
                         self.save_checkpoint()
@@ -278,10 +295,11 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
 
                 # end of epoch
                 # log of last step is combined with validation and rollout
-                wandb_run.log(step_log, step=self.global_step)
+                wandb_run.log(step_log, step=self.global_step - 1)
                 json_logger.log(step_log)
-                self.global_step += 1
-                self.epoch += 1
+        if self._saving_thread is not None:
+            self._saving_thread.join()
+        wandb_run.finish()
 
 @hydra.main(
     version_base=None,

@@ -1,0 +1,50 @@
+# 固定目标区域的双臂双手导轨任务，仅用于训练和离线评估。
+name: tianji_rail_image
+# Dataset 输出 [通道,高,宽]；显存不足可减小高宽，注意保留手指与导轨细节及宽高比。
+image_shape: [3, 240, 320]
+# 观测字段和尺寸契约；新增模态需相应编码器，不能只加字段名。
+shape_meta:
+  obs:
+    # 三路 RGB 共用输出尺寸；原始数据保持不变，缩放发生在读取样本时。
+    camera_0: {shape: '${task.image_shape}', type: rgb}
+    camera_1: {shape: '${task.image_shape}', type: rgb}
+    camera_2: {shape: '${task.image_shape}', type: rgb}
+    # 左右末端各 xyz 米 + rotvec 弧度，共 12 维。
+    robot_eef_pose: {shape: [12], type: low_dim}
+    # 左右手各 20 个绝对关节角，弧度。
+    hand_joint: {shape: [40], type: low_dim}
+  # 左臂6、右臂6、左手20、右手20；绝对目标，不偏移标签。
+  action: {shape: [52]}
+dataset:
+  # 按需读取 RGB，按原始示范划分、连续片段内采样。
+  _target_: diffusion_policy.dataset.tianji_rail_image_dataset.TianjiRailImageDataset
+  # 数据路径；正式训练固定数据版本，恢复训练不更换。
+  dataset_path: /home/jiyuchen/project/WYS/diffusion_policy/data/tianji/episodes_eef_rgb_repaired.zarr
+  # 尺寸契约与输出尺寸共用任务配置，勿独立改为不同值。
+  shape_meta: ${task.shape_meta}
+  image_shape: ${task.image_shape}
+  # true 缩放，false 保留原图；关闭时 image_shape 须匹配原图，显存占用会增加。
+  resize_enabled: true
+  # area 适合缩小；bilinear 可用于放大；nearest 通常不适合 RGB。
+  resize_interpolation: area
+  # 完整动作窗口长度；不足长度不产样本，不补齐，不跨剩余缺口。
+  horizon: ${horizon}
+  # 只读取前几个观测帧；需不超过 horizon，与 Policy 保持一致。
+  n_obs_steps: ${n_obs_steps}
+  # 来源划分随机种子；正式比较实验保持不变。
+  seed: ${training.seed}
+  # 单演示用 0；至少两条独立演示才可设 0.1，checkpoint 自动选择监控项。
+  val_ratio: 0.0
+env_runner:
+  # 离线动作指标；不估计实机放置成功率，无验证窗口则明确跳过。
+  _target_: diffusion_policy.env_runner.tianji_rail_offline_runner.TianjiRailOfflineRunner
+  # 重用同一数据、划分和确定性图像预处理；不重拟合 Policy 的归一化参数。
+  dataset: ${task.dataset}
+  # 执行段从 n_obs_steps-1 开始，长度应能放入完整动作窗口。
+  n_action_steps: ${n_action_steps}
+  # 离线预测 batch；显存不足时减小。
+  batch_size: 8
+  # 每个连续片段内评估窗口起点间隔；1 检查所有窗口，8 更快且仍可能部分重叠。
+  window_stride: 8
+  # null 评估全部所选窗口；冒烟可设较小正整数，报告会反映实际窗口数。
+  max_windows: null
