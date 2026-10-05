@@ -1,0 +1,22 @@
+# 短训练入口：继承正式训练配置，只覆盖流程检查所需的参数。
+defaults:
+  - train_diffusion_transformer_tianji_rail_workspace
+  - _self_
+dataloader:
+  # 每批2个时间窗口样本；降低短训练的显存与计算开销。
+  batch_size: 2
+  # 短训练由主进程读取，避免创建子进程的开销。
+  num_workers: 0
+  # 0个读取子进程时必须关闭；验证读取参数自动继承。
+  persistent_workers: false
+training:
+  # 总共2轮，只检查接口，不用于正式模型训练。
+  num_epochs: 2
+  # 每轮最多2批；两轮共4批，不遍历完整训练集。
+  max_train_steps: 2
+  # 短训练关闭学习率预热，正式配置仍为500个优化器更新步。
+  lr_warmup_steps: 0
+  # 每轮保存模型，便于立即检查 checkpoint 重载与恢复。
+  checkpoint_every: 1
+  # 每轮执行一次训练样本的动作预测检查，不采集新演示。
+  sample_every: 1

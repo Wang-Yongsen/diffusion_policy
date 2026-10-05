@@ -1,0 +1,226 @@
+{
+  "source_repository": "bimanual-teleop",
+  "source_commit": "540cb01fd345f1cfb2e562ec90e0fbffc9c252f8",
+  "source_dirty": true,
+  "snapshot_date": "2026-10-05",
+  "python_namespace": "diffusion_policy.third_party.bimanual_teleop",
+  "local_changes": [
+    "Only the transitive Tianji/Wuji/recording dependency closure is included",
+    "Python imports use the host package namespace",
+    "Default configurations resolve to host package resources",
+    "Bundled SDK README uses project-local documentation",
+    "Raw-spool archive links are relative so bundled data can move together"
+  ],
+  "files": [
+    {
+      "path": "bimanual_teleop/__init__.py",
+      "source_sha256": "fc4cbe17f10cac2c149220472d3f167a0a01745796438691438486050c9802fb",
+      "vendored_sha256": "fc4cbe17f10cac2c149220472d3f167a0a01745796438691438486050c9802fb"
+    },
+    {
+      "path": "bimanual_teleop/cli/__init__.py",
+      "source_sha256": "22a3d1d23520fde1946545012f2f844b5fdf4e7771c19b50401d0b81d696fcd0",
+      "vendored_sha256": "22a3d1d23520fde1946545012f2f844b5fdf4e7771c19b50401d0b81d696fcd0"
+    },
+    {
+      "path": "bimanual_teleop/cli/convert_recording.py",
+      "source_sha256": "30ee3ca9a8ca148b473d2c5f3582ea5984a8bc4215dba0396d5f6f918a0be54b",
+      "vendored_sha256": "732be3aa76e103a9beddc9b5f881b9129774f219b482b6973ddf8687d208d1a2"
+    },
+    {
+      "path": "bimanual_teleop/common/__init__.py",
+      "source_sha256": "3e6781bc60a2aa1de250b2ab7667d6812cda00ac8f4e1dd3ff3b2467d2db6bb3",
+      "vendored_sha256": "3e6781bc60a2aa1de250b2ab7667d6812cda00ac8f4e1dd3ff3b2467d2db6bb3"
+    },
+    {
+      "path": "bimanual_teleop/common/affinity.py",
+      "source_sha256": "adb442bde24d31a091291ea87ca7a3d37084592a0823e5c4e52fef85866c2e01",
+      "vendored_sha256": "adb442bde24d31a091291ea87ca7a3d37084592a0823e5c4e52fef85866c2e01"
+    },
+    {
+      "path": "bimanual_teleop/common/config.py",
+      "source_sha256": "3a06a4f92089cd868bf04acd599a43b47477f76ace9c311d3fb2108239b49979",
+      "vendored_sha256": "3a06a4f92089cd868bf04acd599a43b47477f76ace9c311d3fb2108239b49979"
+    },
+    {
+      "path": "bimanual_teleop/common/console.py",
+      "source_sha256": "a571116a71d2291a776a70f68b2611bc48281bb97d9b876f79d2163972e2fcc7",
+      "vendored_sha256": "1bf70ea3afa69d435b61838829415ea2fd624889e17b7a750aeeff8abc62b5bd"
+    },
+    {
+      "path": "bimanual_teleop/common/runlog.py",
+      "source_sha256": "63f3925b97b0cd3a833dd92fdafe6c6d61b8d1659d8c6355e2602427fefc3622",
+      "vendored_sha256": "b74dc28fcf4323aa373bc8fdb4b4be281f9315966e58d446661d34e89eece64a"
+    },
+    {
+      "path": "bimanual_teleop/control/__init__.py",
+      "source_sha256": "304da8c1c6561c853020cdcdba66fb67398a4d06a6c246ab825ab8e9130e8976",
+      "vendored_sha256": "304da8c1c6561c853020cdcdba66fb67398a4d06a6c246ab825ab8e9130e8976"
+    },
+    {
+      "path": "bimanual_teleop/control/arm/__init__.py",
+      "source_sha256": "618e63d783e72fb2ae3610630c99586a060c675409e23c6f190e76e992bd5abb",
+      "vendored_sha256": "618e63d783e72fb2ae3610630c99586a060c675409e23c6f190e76e992bd5abb"
+    },
+    {
+      "path": "bimanual_teleop/control/arm/cartesian.py",
+      "source_sha256": "d41eb18ecf686d19ca4b3a03d088fb0f144292747eebcd630b42f0ae551bdd61",
+      "vendored_sha256": "b57473654d6ad1102e02b85553ef1e4bea8ecd9492cebfce23f4884a70f921cd"
+    },
+    {
+      "path": "bimanual_teleop/control/arm/servo.py",
+      "source_sha256": "7803056ec9ae2c4dde8b35dcf987a23187a911d06a2a4fd8722e7ebd702c00e0",
+      "vendored_sha256": "c35fb083f1b6d4e4c41fb353a39c2216d2be3c087360ccff5984f7c1d069b81f"
+    },
+    {
+      "path": "bimanual_teleop/devices/__init__.py",
+      "source_sha256": "d0978894c9ed2bd05fda35dce2010aa96f205a3d9909a11251c6faa010e96993",
+      "vendored_sha256": "d0978894c9ed2bd05fda35dce2010aa96f205a3d9909a11251c6faa010e96993"
+    },
+    {
+      "path": "bimanual_teleop/devices/interfaces.py",
+      "source_sha256": "bb6faabf3dfd8a2ca25e7608917ea0427227ea41a3a79b097f0a251857768825",
+      "vendored_sha256": "9b8990a664d2e0dc5c15c80c0923a60e9abacab0415f89186b48c991ce19fa99"
+    },
+    {
+      "path": "bimanual_teleop/devices/tianji/__init__.py",
+      "source_sha256": "f3f90adb688436512d4f15723afb0728905de46aa3b48d07d4c14e0802dd4e39",
+      "vendored_sha256": "f3f90adb688436512d4f15723afb0728905de46aa3b48d07d4c14e0802dd4e39"
+    },
+    {
+      "path": "bimanual_teleop/devices/tianji/config.py",
+      "source_sha256": "403cfc8fa10e049abc4e98b6a7c6914e25f297e652848620466a329468f225f7",
+      "vendored_sha256": "9cf711e8daa5476fdeeab89991802e0127353c9720cb9fe6954df42bdc4e60e0"
+    },
+    {
+      "path": "bimanual_teleop/devices/tianji/driver.py",
+      "source_sha256": "c31298a67a86d8c2629e33a3626fb5a11dbc01bc7dc5a28a8c5a8b180281133f",
+      "vendored_sha256": "4ea0445a08015c6ed0764c8448ecff3bac7f60d2063ec0f35b69da74d518bd76"
+    },
+    {
+      "path": "bimanual_teleop/devices/tianji/model.py",
+      "source_sha256": "7c97a2707463cf2f63dec677876d1a2bcac06326ed6de389924ade69156300f8",
+      "vendored_sha256": "7e7c3fe1c81ae569187ce5af2a97dadd58b4b1f3d4b44aae575aeaf481f08015"
+    },
+    {
+      "path": "bimanual_teleop/devices/tianji/sdk.py",
+      "source_sha256": "106ba10ed8d7e7c1ba5f7e61802531182da680f68a1b7c8fd5c95f2f72318eb4",
+      "vendored_sha256": "106ba10ed8d7e7c1ba5f7e61802531182da680f68a1b7c8fd5c95f2f72318eb4"
+    },
+    {
+      "path": "bimanual_teleop/devices/wuji/__init__.py",
+      "source_sha256": "e3a15a713cac6f9acfdb96d5cae1100b7eeef0bcace33a5f3e1d3135fb692a57",
+      "vendored_sha256": "e3a15a713cac6f9acfdb96d5cae1100b7eeef0bcace33a5f3e1d3135fb692a57"
+    },
+    {
+      "path": "bimanual_teleop/devices/wuji/adapter.py",
+      "source_sha256": "1d1cb077f88c8b63ffb5e4c718d3fe146257300014c3e99ff48bb7a95a47fa0d",
+      "vendored_sha256": "47a4bb0ff3880fbfb7663bc0adf076867e5ac61689b3ef6cc2e48c2d57de7804"
+    },
+    {
+      "path": "bimanual_teleop/devices/wuji/config.py",
+      "source_sha256": "a50c3c768756bc1d0cbf70a90b20691e4000937a0d480878a38957380d6138d4",
+      "vendored_sha256": "5b0419277c213eee2b9cfdb44ab3684eb0f156d412107315775a49cbd89c2bba"
+    },
+    {
+      "path": "bimanual_teleop/paths.py",
+      "source_sha256": "b168c59696bf0890905db0cb5bf21e456a38b832296773d0af216b0fcf330c96",
+      "vendored_sha256": "b1881c311f7affe72438ab18ebc42c1f7ebaef99fc6458e4e9fa81becaad9078"
+    },
+    {
+      "path": "bimanual_teleop/recording/__init__.py",
+      "source_sha256": "7f54fe6c4e283893b57f142f52b53fe73d75c88ae855762c570b392529dceb1d",
+      "vendored_sha256": "7f54fe6c4e283893b57f142f52b53fe73d75c88ae855762c570b392529dceb1d"
+    },
+    {
+      "path": "bimanual_teleop/recording/camera.py",
+      "source_sha256": "a008a270aa4520d21f5395ece45ea731de238a8f5b12e3b86229a3fa9060f6cd",
+      "vendored_sha256": "a008a270aa4520d21f5395ece45ea731de238a8f5b12e3b86229a3fa9060f6cd"
+    },
+    {
+      "path": "bimanual_teleop/recording/config.py",
+      "source_sha256": "52ce14dc9e2ab4eb0d0099b10db1eab583f5d6ae5c2c275c6108c70ae119ebc6",
+      "vendored_sha256": "715e5af4b198949718c22eaae65387bcde4cf0172a2d772286dd1c81ca6f7578"
+    },
+    {
+      "path": "bimanual_teleop/recording/convert.py",
+      "source_sha256": "1b3a2b9807dcc88576fa4e1731817822bd24c0d79ae77cef793ccd61567db18d",
+      "vendored_sha256": "dfb6b85b36f25f83b9f16fe65c34cf7c346021a0daa5c9c9a1c7bfee17a2d980"
+    },
+    {
+      "path": "bimanual_teleop/recording/finalize.py",
+      "source_sha256": "30992afddfbc758cca1b0862ed93b1efbdceff1e620cde1273e8c2483ed2200b",
+      "vendored_sha256": "813711eb27224ebefc8d6219bbfa8e74d66735c58a3c919087d7a64f316bcc95"
+    },
+    {
+      "path": "bimanual_teleop/recording/sink.py",
+      "source_sha256": "7c458b3dc47845667c6fb08b09566d11c4e8d63e2f372eb411fc11fc1b64ccbc",
+      "vendored_sha256": "5fcc755b273d4338d9dd05753603319a55e8168b100cd8a2290b007dd6946ab7"
+    },
+    {
+      "path": "bimanual_teleop/recording/spool.py",
+      "source_sha256": "390b6e16333423da0e03d5e5e360ab8348f4963b19090672eee67f7c28018ee1",
+      "vendored_sha256": "07855ad38c9b109c8581e26d9d2e4fc06af71e3aefcc951c257b957e9951e89d"
+    },
+    {
+      "path": "bimanual_teleop/recording/storage.py",
+      "source_sha256": "2460bbfdbcb75d8aa76abbea8076997d8f3521090e40591d1f75d28bdc3372d5",
+      "vendored_sha256": "2460bbfdbcb75d8aa76abbea8076997d8f3521090e40591d1f75d28bdc3372d5"
+    },
+    {
+      "path": "bimanual_teleop/types.py",
+      "source_sha256": "18273ce2d16170654e29816542f2c2bfd27930c7afa67b05f6415432e9752133",
+      "vendored_sha256": "18273ce2d16170654e29816542f2c2bfd27930c7afa67b05f6415432e9752133"
+    },
+    {
+      "path": "bimanual_teleop/vendor/__init__.py",
+      "source_sha256": "67c35b46b7246ecb0b9ec4558202bc89a1b41c9537e4da0f3ea87e7f79a2c77e",
+      "vendored_sha256": "67c35b46b7246ecb0b9ec4558202bc89a1b41c9537e4da0f3ea87e7f79a2c77e"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/__init__.py",
+      "source_sha256": "b515ef9772954a9f9629db5a7c0c1dca94887e4a2ecebdfb35b737af9daab537",
+      "vendored_sha256": "b515ef9772954a9f9629db5a7c0c1dca94887e4a2ecebdfb35b737af9daab537"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/LICENSE",
+      "source_sha256": "4f9da023eb0f5c4b776c06936fe257863620bd00a26d13225d4629b08144b1a9",
+      "vendored_sha256": "4f9da023eb0f5c4b776c06936fe257863620bd00a26d13225d4629b08144b1a9"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/manifest.json",
+      "source_sha256": "574c9b1b9c814e96672302f0bff249e6284e7ee199fd4bceb07d7cc184617b40",
+      "vendored_sha256": "574c9b1b9c814e96672302f0bff249e6284e7ee199fd4bceb07d7cc184617b40"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/README.md",
+      "source_sha256": "d9d401c55ad7dae9003944630cb98a17f0218a1f966bdb3a3aacb7b42ce2b1da",
+      "vendored_sha256": "2c16a9390e7ba522234b246bf0ec81723cd92e6b8fd14cefe9d9c96d487ac31c"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/CommonConfig/ccs_m6_40.MvKDCfg",
+      "source_sha256": "ce20b1a80974c3ed58cdac4973152625096c8ad93a779e5fd4108c26ce19bd52",
+      "vendored_sha256": "ce20b1a80974c3ed58cdac4973152625096c8ad93a779e5fd4108c26ce19bd52"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/SDK_PYTHON/libKine.so",
+      "source_sha256": "f2aec6ebc1f41302fe0126284076211c044d6c7e1c2276dc919767254e0c597f",
+      "vendored_sha256": "f2aec6ebc1f41302fe0126284076211c044d6c7e1c2276dc919767254e0c597f"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/SDK_PYTHON/fx_robot.py",
+      "source_sha256": "fae947726ca67f9b5ea644710e12154c508015bc4534db9803048d323fc11a3d",
+      "vendored_sha256": "fae947726ca67f9b5ea644710e12154c508015bc4534db9803048d323fc11a3d"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/SDK_PYTHON/libMarvinSDK.so",
+      "source_sha256": "dd6b7afdbda8de3bafb6797c6f94547302ae60bf285ee8daa9762de45be636d6",
+      "vendored_sha256": "dd6b7afdbda8de3bafb6797c6f94547302ae60bf285ee8daa9762de45be636d6"
+    },
+    {
+      "path": "bimanual_teleop/vendor/tianji/SDK_PYTHON/fx_kine.py",
+      "source_sha256": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5",
+      "vendored_sha256": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5"
+    }
+  ]
+}

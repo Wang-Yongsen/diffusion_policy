@@ -1,5 +1,6 @@
-# 此配置对应 recordings/20260924_204339_afdb5a7a，从 session 目录执行转换。
-# 修复参数作用和建议与 bimanual-teleop/configs/recording_conversion.yaml 一致。
+# 此配置对应本项目 reordings/20260924_204339_afdb5a7a，从 session 目录执行转换。
+# 在 diffusion_policy 根目录执行 CLI，传 --conversion-config 指向本文件；不传仍为严格模式。
+# 修复参数作用和建议与 diffusion_policy/config/recording_conversion.yaml 一致。
 # 换一条采集记录时使用通用配置，并重新复核暂停；不要复制本记录的复核结论。
 # repair 启用固定网格与短缺口修复；strict 保留原转换方式和原阈值。
 mode: repair
@@ -17,7 +18,10 @@ max_command_age_ms: 50
 pause_policy: checked_compress
 # 相机来源时间偏移突变阈值 ms；需高于时钟抖动、低于要检测的暂停，默认100。
 pause_offset_tolerance_ms: 100
-# 按来源演示名和暂停后的主相机原始帧索引记录复核。
+# 人工填写的暂停接缝复核结论；转换器只读取，不会自动写回此 YAML。
+# 来源名取 quality_report.episodes[].source_episode，随 --input 根目录变化。
+# 接缝索引取该来源 pauses[].after_main_row：从0开始的主相机原始行号，非设备帧号或输出行号。
+# merge/reason 需核对暂停两侧状态、绝对目标与场景后填写；未填写默认保留边界。
 pause_reviews:
   episode_000000:
     1341:

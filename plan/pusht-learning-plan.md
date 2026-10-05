@@ -11,7 +11,7 @@
 
 1. **先把 Push-T 写成一份任务需求，再理解 Env 如何实现它。**
 
-   从 [pusht_env.py](/home/jiyuchen/project/WYS/diffusion_policy/diffusion_policy/env/pusht/pusht_env.py:28) 开始，依次回答：控制谁、能看到什么、动作表示什么、什么时候成功、一轮任务什么时候结束。
+   从 [pusht_env.py](../diffusion_policy/env/pusht/pusht_env.py#L28) 开始，依次回答：控制谁、能看到什么、动作表示什么、什么时候成功、一轮任务什么时候结束。
 
    重点区分环境内部状态、策略观测和控制动作。例如，环境内部包含推块器位置、T 块位置和角度；默认低维策略接收的是关键点与推块器位置；二维动作表示推块器的目标位置。还要理解控制频率、物理仿真频率、覆盖率奖励之间的关系。
 
@@ -19,7 +19,7 @@
 
 2. **跟踪一条示范，从采集到训练样本。**
 
-   沿着示范采集脚本、ReplayBuffer、[PushTLowdimDataset](/home/jiyuchen/project/WYS/diffusion_policy/diffusion_policy/dataset/pusht_dataset.py:12) 和 SequenceSampler，追踪同一条轨迹。
+   沿着示范采集脚本、ReplayBuffer、[PushTLowdimDataset](../diffusion_policy/dataset/pusht_dataset.py#L12) 和 SequenceSampler，追踪同一条轨迹。
 
    重点解释：如何对应 `obs_t` 与 `action_t`；为什么记录 episode 边界；如何切长度为 `T` 的窗口；开头和结尾怎样补齐；训练与验证如何按 episode 组织；原始字段如何变成策略输入。
 
@@ -39,7 +39,7 @@
 
 4. **从配置出发，理解 Workspace 怎样组装训练流程。**
 
-   从 [pusht_lowdim.yaml](/home/jiyuchen/project/WYS/diffusion_policy/diffusion_policy/config/task/pusht_lowdim.yaml:1) 和对应方法配置出发，追踪 Hydra 怎样把配置中的 `_target_`、插值和覆盖参数变成对象。
+   从 [pusht_lowdim.yaml](../diffusion_policy/config/task/pusht_lowdim.yaml#L1) 和对应方法配置出发，追踪 Hydra 怎样把配置中的 `_target_`、插值和覆盖参数变成对象。
 
    然后沿 `train.py → Workspace.run()` 阅读，找到 Dataset、DataLoader、Policy、优化器、EMA、归一化器和 Runner 的创建位置。区分训练损失、验证损失和环境评估分数，并说明 checkpoint 保存什么、如何恢复。
 

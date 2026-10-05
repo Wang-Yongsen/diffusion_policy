@@ -1,0 +1,56 @@
+name: tianji-rail
+# 在项目根目录执行 conda env create -f conda_environment_tianji.yaml。
+# 环境按 name 创建到 Conda 默认目录；设备、转换源码和 SDK 随 third_party 保存。
+# 仅覆盖天机训练、整理和部署；其他任务的旧 Gym / MuJoCo 不加入。
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - pip=24.0
+  - setuptools=75.8.2
+  - wheel=0.45.1
+  # 与本机已验收的 Blackwell 二进制组合一致。
+  - cuda-version=12.9
+  - pytorch=2.7.1=cuda129_mkl_py310_hecdad2d_304
+  - torchvision=0.22.1=cuda129_py310_h0345b57_1
+  - pip:
+    - torch==2.7.1
+    - torchvision==0.22.1
+    - numpy==1.26.4
+    - scipy==1.15.3
+    # Dataset 共用采样工具依赖 Numba；选支持 NumPy 1.26 的版本。
+    - numba==0.61.2
+    - matplotlib==3.10.9
+    - opencv-python==4.11.0.86
+    - zarr==2.18.3
+    - numcodecs==0.13.1
+    - av==16.1.0
+    - pyrealsense2==2.58.4.10922
+    - wuji-sdk==2026.8.31
+    - quadprog==0.1.13
+    - rich==14.3.4
+    - PyYAML==6.0.3
+    - hydra-core==1.2.0
+    - einops==0.4.1
+    - dill==0.3.5.1
+    - diffusers==0.11.1
+    # 旧版 diffusers 需要 cached_download。
+    - huggingface-hub==0.25.2
+    - robomimic==0.2.0
+    - h5py==3.12.1
+    - pandas==1.5.3
+    - wandb==0.22.3
+    - threadpoolctl==3.1.0
+    - tqdm==4.67.1
+    - imageio==2.37.0
+    - imageio-ffmpeg==0.6.0
+    - tensorboard==2.20.0
+    - tensorboardX==2.6.4
+    - psutil==5.9.2
+    - click==8.1.8
+    - termcolor==2.5.0
+    - -e .
+variables:
+  PIP_USER: "false"
+  PYTHONNOUSERSITE: "1"

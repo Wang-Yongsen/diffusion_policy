@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/cynthia-you/TJ_FX_ROBOT_CONTRL_SDK",
+  "commit": "02440e886fb59095711eb9ec6dcbedd8be08922a",
+  "control_version": 100343014,
+  "platform": "linux_x86_64",
+  "files": {
+    "SDK_PYTHON/fx_robot.py": "fae947726ca67f9b5ea644710e12154c508015bc4534db9803048d323fc11a3d",
+    "SDK_PYTHON/fx_kine.py": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5",
+    "SDK_PYTHON/libMarvinSDK.so": "dd6b7afdbda8de3bafb6797c6f94547302ae60bf285ee8daa9762de45be636d6",
+    "SDK_PYTHON/libKine.so": "f2aec6ebc1f41302fe0126284076211c044d6c7e1c2276dc919767254e0c597f",
+    "CommonConfig/ccs_m6_40.MvKDCfg": "ce20b1a80974c3ed58cdac4973152625096c8ad93a779e5fd4108c26ce19bd52",
+    "LICENSE": "4f9da023eb0f5c4b776c06936fe257863620bd00a26d13225d4629b08144b1a9"
+  }
+}

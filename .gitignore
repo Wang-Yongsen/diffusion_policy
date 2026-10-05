@@ -8,6 +8,10 @@ outputs
 data
 data_local
 .vscode
+!.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/bashrc
 _wandb
 
 **/.DS_Store
@@ -28,6 +32,7 @@ __pycache__/
 
 # C extensions
 *.so
+!third_party/bimanual_teleop/vendor/tianji/SDK_PYTHON/*.so
 
 # Distribution / packaging
 .Python

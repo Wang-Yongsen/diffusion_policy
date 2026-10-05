@@ -1,0 +1,6 @@
+# Keep the user's normal shell setup, then activate this project's environment.
+if [ -r "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+fi
+source "$HOME/miniforge3/etc/profile.d/conda.sh"
+conda activate tianji-rail

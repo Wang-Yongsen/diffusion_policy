@@ -3,14 +3,16 @@
 # 或 train_diffusion_transformer_tianji_rail_workspace.yaml 的 policy 参数。
 task:
   # Dataset 输出图像尺寸，顺序为 [通道数, 高度, 宽度]。
-  # 默认 [3,240,320]；显存不足可减小高宽，但应抽查导轨和手指细节是否清晰。
-  # 关闭缩放时须改为原图尺寸；首版三路相机共用输出尺寸，原图尺寸需一致。
+  # 当前 [3,480,640]，对应宽640、高480的原图；当前关闭缩放，尺寸须与原图一致。
+  # 后续如需缩小，须同时开启 resize_enabled，并改为目标尺寸，如 [3,240,320]。
+  # 首版三路相机共用输出尺寸，关闭缩放时三路原图尺寸需一致。
   # Dataset、Runner 和 shape_meta 均引用此尺寸，避免多处手动修改。
-  image_shape: [3, 240, 320]
+  image_shape: [3, 480, 640]
   dataset:
     # true：将 RGB 缩放到 image_shape 的高宽；false：保留原图尺寸。
-    # 建议首次训练保持 true；关闭后显存和读取开销可能明显增加。
-    resize_enabled: true
+    # 当前按用户要求设为 false，保留原图像素；只转换通道顺序和像素数值格式。
+    # 原图输入的内存、显存和计算开销高于缩小后的图像。
+    resize_enabled: false
     # 缩放插值方式，支持 area / bilinear / nearest。
     # area 适合缩小，bilinear 适合放大或一般缩放；nearest 通常不推荐用于 RGB。
     # 缩放关闭时此参数不执行；不额外进行第二次缩放。
@@ -19,7 +21,7 @@ task:
     image_shape: ${task.image_shape}
 policy:
   # null：关闭视觉编码器裁剪；[高,宽]：启用训练时随机裁剪。
-  # 输入 240×320 时可设 [216,288]，但应确认不会裁掉导轨或操作中的手。
+  # 输入 480×640 时可设 [432,576]，但应确认不会裁掉导轨或操作中的手。
   # 当前实现要求两个维度都严格小于 Dataset 输出尺寸。
   # 建议先用 null 建立基线，再单独开启裁剪比较效果。
   crop_shape: null

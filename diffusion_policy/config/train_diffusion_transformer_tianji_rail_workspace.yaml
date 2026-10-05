@@ -40,7 +40,7 @@ policy:
     prediction_type: epsilon
   # DDIM 推理迭代次数；更多通常更慢，先以8步比较效果。
   num_inference_steps: 8
-  # null关闭裁剪；[高,宽]启用训练随机裁剪，如[216,288]。
+  # 当前 null 保留整幅原图；[高,宽]启用训练随机裁剪，如原图480×640时用[432,576]。
   # 高宽须分别小于输入；先检查裁剪后是否仍覆盖导轨和手。
   crop_shape: null
   # 开启裁剪后验证/评估固定中心裁剪；建议 true，避免随机评估。
@@ -80,16 +80,18 @@ ema:
   min_value: 0.0
   max_value: 0.9999
 dataloader:
-  # 训练batch；冒烟用2，正式默认8，显存不足时降低。
-  batch_size: 8
-  # 读取worker；先用0，观察吞吐后再提高。
-  num_workers: 0
+  # 每批32个时间窗口样本；短训配置覆盖为2。
+  # RTX PRO 6000上480×640原图实测通过，峰值分配显存约26.6GiB。
+  batch_size: 32
+  # 4个读取子进程；原图batch=32实测约57样本/秒，与8个进程几乎相同。
+  # 短训覆盖为0，由主进程读取；设0时必须同时关闭 persistent_workers。
+  num_workers: 4
   # 训练打乱样本，建议 true。
   shuffle: true
   # CUDA传输使用锁页内存；GPU训练建议 true。
   pin_memory: true
-  # num_workers=0必须为 false；增加worker后可开启。
-  persistent_workers: false
+  # 跨轮保留读取进程，避免每轮重新创建；num_workers=0时必须为 false。
+  persistent_workers: true
 val_dataloader:
   # 验证batch，可按显存调整；不影响来源划分。
   batch_size: ${dataloader.batch_size}
@@ -99,7 +101,7 @@ val_dataloader:
   shuffle: false
   # GPU传输设置与训练一致。
   pin_memory: ${dataloader.pin_memory}
-  # 0个worker时必须关闭。
+  # 与训练共用；短训使用0个worker时自动关闭。
   persistent_workers: ${dataloader.persistent_workers}
 optimizer:
   # Transformer参数权重衰减；专用get_optimizer接口，不传通用AdamW的weight_decay。
@@ -132,7 +134,7 @@ training:
   # 离线Runner调用间隔，epoch；小值会增加评估耗时。
   rollout_every: 50
   # checkpoint保存间隔，epoch；冒烟设1。
-  checkpoint_every: 50
+  checkpoint_every: 10
   # 验证损失间隔，epoch；空验证集自动跳过。
   val_every: 1
   # 训练batch动作采样检查间隔，epoch；冒烟设1。
