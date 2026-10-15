@@ -1,0 +1,31 @@
+%% 节点、组件边界与PNG由同一份规格生成；PNG布局单独指定。
+flowchart TD
+  subgraph cfg["配置"]
+    config["diffusion_policy/config/<br/>tianji_rail_real_eval.yaml<br/>tianji_teleop.yaml / wuji_teleop.yaml<br/>recording.yaml：相机顺序与序列号"]
+  end
+  subgraph entry["独立启动入口"]
+    main["eval_tianji_rail.py<br/>参数与模型契约检查<br/>加载 EMA / 模型及归一化器<br/>模拟输入预检查；选择运行模式"]
+  end
+  subgraph model["模型与预处理契约"]
+    checkpoint["checkpoint + Policy<br/>权重、归一化器、输入尺寸及时间窗口<br/>policy/diffusion_transformer_<br/>hybrid_image_policy.py"]
+  end
+  subgraph env["实时环境 Env"]
+    environment["real_world/tianji_rail_env.py<br/>三路RGB + 双臂FK + 双手实际关节<br/>历史缓存、对齐及图像预处理<br/>start / get_obs / engage<br/>exec_actions / pause / close"]
+  end
+  subgraph runner["试验组织 Runner"]
+    trials["env_runner/tianji_rail_real_runner.py<br/>试验开始 / 结束；独立GPU推理线程<br/>操作员命令、故障与超时<br/>TrialRecorder：异步日志与视频<br/>summarize_trials：结果及成功率"]
+  end
+  subgraph runtime["动作执行 Runtime"]
+    targets["real_world/tianji_policy_runtime.py<br/>52维拆分、名义时刻及过期筛选<br/>工作空间 / 跳变 / 速度限制<br/>双臂200 Hz；左右手各120 Hz<br/>覆盖耗尽或设备异常时请求暂停"]
+  end
+  subgraph vendor["本项目 third_party 〔Env / Runtime使用〕"]
+    devices["third_party/bimanual_teleop/<br/>control/arm/：约束笛卡尔执行器与伺服<br/>devices/tianji/、devices/wuji/：驱动与运动学<br/>recording/camera.py：实时相机；vendor/tianji/：SDK与模型"]
+  end
+  subgraph logs["评估记录 〔Runner异步写入〕"]
+    records["data/real_eval/<session>/<br/>session.json / summary.json<br/>trial_0001/：trial.json、events.jsonl、timing.json<br/>camera_0.mp4 / camera_1.mp4 / camera_2.mp4"]
+  end
+  config --> main
+  checkpoint --> main
+  main --> trials
+  trials -->|"观测"| environment
+  trials -->|"动作"| targets

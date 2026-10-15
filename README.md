@@ -6,6 +6,8 @@
 [[Colab (state)]](https://colab.research.google.com/drive/1gxdkgRVfM55zihY9TFLja97cSVZOZq2B?usp=sharing)
 [[Colab (vision)]](https://colab.research.google.com/drive/18GIHeOQ5DyjMN8iIRZL2EKZ0745NLIpg?usp=sharing)
 
+天机导轨任务的训练、离线评估和真机评估见[模型使用说明](docs/tianji-rail/README.md)，使用 `tianji-rail-diffusion-policy` 环境。数据采集、整理和转换在 [bimanual-teleop](../bimanual-teleop/docs/recording_guide.md) 中完成，模型项目直接读取导出的训练zarr。
+
 
 [Cheng Chi](http://cheng-chi.github.io/)<sup>1</sup>,
 [Siyuan Feng](https://www.cs.cmu.edu/~sfeng/)<sup>2</sup>,

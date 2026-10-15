@@ -1,0 +1,30 @@
+%% 节点、组件边界与PNG由同一份规格生成；PNG布局单独指定。
+flowchart TD
+  subgraph startup["A · 启动与模式选择"]
+    load["入口校验与模型预检查<br/>读取部署配置及 checkpoint<br/>检查输入契约、EMA与归一化器<br/>运动模式先检查工作空间已填写"]
+    only["--check-only<br/>模拟观测做 batch=1 推理<br/>保存 preflight.json 后退出<br/>不连接任何设备"]
+    connect["连接相机和设备反馈<br/>启动观测、控制及记录所需线程<br/>默认影子模式：只读、不使能<br/>当前模型预处理以 checkpoint 为准"]
+    motion["--motion<br/>获得运动模式的试验入口<br/>等待操作员输入 s 并按Enter<br/>每次试验都需重新开始"]
+  end
+  subgraph loop["B · 在线试验：观测 → 推理 → 定时目标 → 实际反馈"]
+    begin["Runner开始一条试验<br/>影子自动开始；运动由s触发<br/>运动接合设备；每条试验重置策略<br/>启动异步记录及本次推理"]
+    observe["Env.get_obs：七路历史对齐<br/>三路RGB + 双臂实际FK + 双手关节<br/>取有效主相机锚点t0；检查覆盖与时效<br/>通常查询 t0−33.3 ms 与 t0"]
+    predict["Runner：预处理 + GPU推理<br/>Policy.predict_action<br/>当前配置返回8步 × 52维动作<br/>实际观测与动作长度从checkpoint读取"]
+    schedule["Env.exec_actions<br/>保留 t0+i/30；丢弃过期动作<br/>影子：只记录 shadow_schedule<br/>运动：校验目标并更新Runtime队列"]
+    control["Runtime独立推进目标<br/>双臂200 Hz；左右手各120 Hz<br/>按时刻选目标，再伺服 / 限速提交<br/>相机与实际反馈持续更新历史"]
+    stop["结束本次试验 / 请求暂停<br/>人工p / y / n；超时；故障<br/>清空未来队列；迟到预测作废<br/>双臂请求保持<br/>健康手维持最后已接受的目标"]
+    save["记录结果与汇总<br/>trial.json + 三路视频 + 事件与时序<br/>summary.json：所有已开始运动试验<br/>成功率 = 成功次数 / 运动试验次数<br/>q / Ctrl+C：退出清理并关闭驱动"]
+  end
+  load -->|"预检查模式"| only
+  load --> connect
+  connect -->|"运动"| motion
+  connect -->|"影子自动开始"| begin
+  motion -->|"手动开始"| begin
+  begin --> observe
+  observe --> predict
+  predict --> schedule
+  schedule -->|"运动"| control
+  control -.->|"实际反馈"| observe
+  schedule -.-> observe
+  observe -->|"失效"| stop
+  stop --> save

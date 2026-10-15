@@ -1,0 +1,27 @@
+%% 节点、组件边界与PNG由同一份规格生成；PNG布局单独指定。
+flowchart TD
+  subgraph obs["A · 观测编码 〔DiffusionTransformerHybridImagePolicy 内部的 obs_encoder〕"]
+    obs_in["两步观测<br/>每步：三路RGB + EEF12维 + 手40维<br/>图像：(B,2,3,480,640)，每路各一份<br/>低维：(B,2,12) / (B,2,40)"]
+    encode["归一化 + robomimic观测编码器<br/>图像特征与低维特征组合<br/>Policy 构造 obs_encoder；可训练<br/>common/robomimic_config_util.py"]
+    cond["条件特征 cond<br/>形状：(B,2,Do)<br/>Do = 观测编码器输出维度<br/>提供给下方两种 Transformer 调用"]
+  end
+  subgraph loss["B · compute_loss：学习预测噪声 〔训练〕"]
+    gt["示范动作 (B,16,52)<br/>归一化 → 随机抽取扩散步 k<br/>正常动作标签来自过去已成功提交的目标"]
+    noise["scheduler.add_noise<br/>干净动作 + 高斯噪声 → 含噪动作 a_k<br/>训练扩散步：100；k 表示噪声级别"]
+    train_model["TransformerForDiffusion(a_k, k, cond)<br/>动作 token 自注意力 + 观测条件交叉注意力<br/>model/diffusion/transformer_for_diffusion.py"]
+    mse["预测噪声 vs 添加噪声 → MSE<br/>Workspace 反向传播；更新编码器和 Transformer<br/>prediction_type: epsilon"]
+  end
+  subgraph sample["C · predict_action / conditional_sample 〔推理〕"]
+    random["随机动作噪声 (B,16,52)<br/>观测条件在本次动作生成中保持固定<br/>输入来自 Dataset 或真机 Env"]
+    denoise["Transformer + DDIM 调度器：循环8次<br/>Transformer 预测噪声<br/>scheduler.step 更新含噪动作<br/>直到得到归一化动作序列<br/>Policy：conditional_sample"]
+    output["反归一化 → 16步完整预测 → 8步执行段<br/>action_pred：(B,16,52)<br/>action = action_pred[:,1:9]：(B,8,52)<br/>最新观测对应原始窗口索引1<br/>顺序：左臂6 / 右臂6 / 左手20 / 右手20"]
+  end
+  obs_in --> encode
+  encode --> cond
+  gt --> noise
+  noise --> train_model
+  train_model --> mse
+  random --> denoise
+  denoise --> output
+  cond -.->|"cond"| train_model
+  cond -.->|"cond"| denoise

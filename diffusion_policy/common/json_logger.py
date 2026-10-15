@@ -1,18 +1,22 @@
-from typing import Optional, Callable, Any, Sequence
+from typing import Optional, Callable, Any, Sequence, TYPE_CHECKING
 import os
 import copy
 import json
 import numbers
-import pandas as pd
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def read_json_log(path: str, 
         required_keys: Sequence[str]=tuple(), 
-        **kwargs) -> pd.DataFrame:
+        **kwargs) -> 'pd.DataFrame':
     """
     Read json-per-line file, with potentially incomplete lines.
     kwargs passed to pd.read_json
     """
+    # Training only writes JSON lines; pandas is needed solely for log analysis.
+    import pandas as pd
     lines = list()
     with open(path, 'r') as f:
         while True:

@@ -1,0 +1,23 @@
+%% 讲解用两轮时序；40ms为假设，实际时间需查日志。
+sequenceDiagram
+    participant H as 相机与实际状态历史
+    participant E as Env：对齐观测
+    participant P as Runner：预处理/Policy
+    participant R as Runtime：未来队列
+    participant C as 双臂/左右手控制线程
+    participant D as 真机与SDK
+    H->>E: 历史覆盖t0₁=0；查询[-33.3,0]ms
+    E->>P: O1 + t0₁；10ms开始计算
+    P->>R: 50ms返回8步A；名义时刻t0₁+i/30
+    Note over R: 仅保留>60ms；A0/A1丢弃
+    R->>C: 保持接合参考，66.7ms起使用A2
+    C->>D: 200Hz双臂/各120Hz手按tick提交
+    D-->>H: 实际图像与状态持续反馈
+    H->>E: 历史覆盖t0₂=66.7；查询[33.3,66.7]ms
+    E->>P: O2 + t0₂；80ms开始计算
+    Note over C,D: P2计算期间继续推进P1的当前目标
+    P->>R: 120ms返回8步B；保留>130ms
+    Note over R: 丢弃B0/B1；未来队列整体替换
+    R->>C: 133.3ms前保持A3，此后使用B2...
+    C->>D: 连续控制；实际反馈进入下一轮观测
+    Note over R,C: 若覆盖耗尽：独立清队列、请求暂停，不等待GPU

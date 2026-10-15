@@ -1,9 +1,9 @@
 {
-    "python.defaultInterpreterPath": "${env:HOME}/miniforge3/envs/tianji-rail/bin/python",
+    "python.defaultInterpreterPath": "/opt/miniconda3/envs/tianji-rail-diffusion-policy/bin/python",
     "python.terminal.activateEnvironment": false,
-    "terminal.integrated.defaultProfile.linux": "tianji-rail",
+    "terminal.integrated.defaultProfile.linux": "tianji-rail-diffusion-policy",
     "terminal.integrated.profiles.linux": {
-        "tianji-rail": {
+        "tianji-rail-diffusion-policy": {
             "path": "/bin/bash",
             "args": ["--rcfile", "${workspaceFolder}/.vscode/bashrc", "-i"]
         }

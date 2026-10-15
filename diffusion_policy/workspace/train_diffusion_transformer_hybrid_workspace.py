@@ -29,6 +29,7 @@ from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.diffusion.ema_model import EMAModel
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
+from diffusion_policy.common.policy_evaluation import evaluation_context, compute_validation_loss
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -219,35 +220,30 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                 policy = self.model
                 if cfg.training.use_ema:
                     policy = self.ema_model
-                policy.eval()
 
                 # run rollout
                 if (self.epoch % cfg.training.rollout_every) == 0:
-                    runner_log = env_runner.run(policy)
+                    with evaluation_context(policy, seed=cfg.training.seed):
+                        runner_log = env_runner.run(policy)
                     # log all
                     step_log.update(runner_log)
 
                 # run validation
                 if (self.epoch % cfg.training.val_every) == 0:
-                    with torch.no_grad():
-                        val_losses = list()
-                        with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}", 
-                                leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
-                            for batch_idx, batch in enumerate(tepoch):
-                                batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss = self.model.compute_loss(batch)
-                                val_losses.append(loss)
-                                if (cfg.training.max_val_steps is not None) \
-                                    and batch_idx >= (cfg.training.max_val_steps-1):
-                                    break
-                        if len(val_losses) > 0:
-                            val_loss = torch.mean(torch.tensor(val_losses)).item()
-                            # log epoch average validation loss
-                            step_log['val_loss'] = val_loss
+                    with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
+                            leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
+                        val_loss = compute_validation_loss(
+                            policy, tepoch, device,
+                            max_batches=cfg.training.max_val_steps,
+                            seed=cfg.training.seed)
+                    if val_loss is not None:
+                        step_log['val_loss'] = val_loss
+                        step_log['val_loss_uses_ema'] = cfg.training.use_ema
+                        step_log['val_loss_seed'] = cfg.training.seed
 
                 # run diffusion sampling on a training batch
                 if (self.epoch % cfg.training.sample_every) == 0:
-                    with torch.no_grad():
+                    with evaluation_context(policy, seed=cfg.training.seed):
                         # sample trajectory from training set, and evaluate difference
                         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                         obs_dict = batch['obs']
@@ -291,7 +287,6 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                     if topk_ckpt_path is not None:
                         self.save_checkpoint(path=topk_ckpt_path)
                 # ========= eval end for this epoch ==========
-                policy.train()
 
                 # end of epoch
                 # log of last step is combined with validation and rollout

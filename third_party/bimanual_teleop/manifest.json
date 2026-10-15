@@ -5,11 +5,11 @@
   "snapshot_date": "2026-10-05",
   "python_namespace": "diffusion_policy.third_party.bimanual_teleop",
   "local_changes": [
-    "Only the transitive Tianji/Wuji/recording dependency closure is included",
+    "Only the transitive real-world evaluation dependency closure is included",
     "Python imports use the host package namespace",
     "Default configurations resolve to host package resources",
     "Bundled SDK README uses project-local documentation",
-    "Raw-spool archive links are relative so bundled data can move together"
+    "2026-10-14: removed offline finalization/conversion CLI, spool/storage code and its unused console/affinity helpers; retained camera/config/sink for live observation"
   ],
   "files": [
     {
@@ -18,39 +18,14 @@
       "vendored_sha256": "fc4cbe17f10cac2c149220472d3f167a0a01745796438691438486050c9802fb"
     },
     {
-      "path": "bimanual_teleop/cli/__init__.py",
-      "source_sha256": "22a3d1d23520fde1946545012f2f844b5fdf4e7771c19b50401d0b81d696fcd0",
-      "vendored_sha256": "22a3d1d23520fde1946545012f2f844b5fdf4e7771c19b50401d0b81d696fcd0"
-    },
-    {
-      "path": "bimanual_teleop/cli/convert_recording.py",
-      "source_sha256": "30ee3ca9a8ca148b473d2c5f3582ea5984a8bc4215dba0396d5f6f918a0be54b",
-      "vendored_sha256": "732be3aa76e103a9beddc9b5f881b9129774f219b482b6973ddf8687d208d1a2"
-    },
-    {
       "path": "bimanual_teleop/common/__init__.py",
       "source_sha256": "3e6781bc60a2aa1de250b2ab7667d6812cda00ac8f4e1dd3ff3b2467d2db6bb3",
       "vendored_sha256": "3e6781bc60a2aa1de250b2ab7667d6812cda00ac8f4e1dd3ff3b2467d2db6bb3"
     },
     {
-      "path": "bimanual_teleop/common/affinity.py",
-      "source_sha256": "adb442bde24d31a091291ea87ca7a3d37084592a0823e5c4e52fef85866c2e01",
-      "vendored_sha256": "adb442bde24d31a091291ea87ca7a3d37084592a0823e5c4e52fef85866c2e01"
-    },
-    {
       "path": "bimanual_teleop/common/config.py",
       "source_sha256": "3a06a4f92089cd868bf04acd599a43b47477f76ace9c311d3fb2108239b49979",
       "vendored_sha256": "3a06a4f92089cd868bf04acd599a43b47477f76ace9c311d3fb2108239b49979"
-    },
-    {
-      "path": "bimanual_teleop/common/console.py",
-      "source_sha256": "a571116a71d2291a776a70f68b2611bc48281bb97d9b876f79d2163972e2fcc7",
-      "vendored_sha256": "1bf70ea3afa69d435b61838829415ea2fd624889e17b7a750aeeff8abc62b5bd"
-    },
-    {
-      "path": "bimanual_teleop/common/runlog.py",
-      "source_sha256": "63f3925b97b0cd3a833dd92fdafe6c6d61b8d1659d8c6355e2602427fefc3622",
-      "vendored_sha256": "b74dc28fcf4323aa373bc8fdb4b4be281f9315966e58d446661d34e89eece64a"
     },
     {
       "path": "bimanual_teleop/control/__init__.py",
@@ -130,7 +105,7 @@
     {
       "path": "bimanual_teleop/recording/__init__.py",
       "source_sha256": "7f54fe6c4e283893b57f142f52b53fe73d75c88ae855762c570b392529dceb1d",
-      "vendored_sha256": "7f54fe6c4e283893b57f142f52b53fe73d75c88ae855762c570b392529dceb1d"
+      "vendored_sha256": "2d898e1c01b120787d1293eb3e772380ecdcce5e022a00bc48c4d9c654ca3317"
     },
     {
       "path": "bimanual_teleop/recording/camera.py",
@@ -143,29 +118,9 @@
       "vendored_sha256": "715e5af4b198949718c22eaae65387bcde4cf0172a2d772286dd1c81ca6f7578"
     },
     {
-      "path": "bimanual_teleop/recording/convert.py",
-      "source_sha256": "1b3a2b9807dcc88576fa4e1731817822bd24c0d79ae77cef793ccd61567db18d",
-      "vendored_sha256": "dfb6b85b36f25f83b9f16fe65c34cf7c346021a0daa5c9c9a1c7bfee17a2d980"
-    },
-    {
-      "path": "bimanual_teleop/recording/finalize.py",
-      "source_sha256": "30992afddfbc758cca1b0862ed93b1efbdceff1e620cde1273e8c2483ed2200b",
-      "vendored_sha256": "813711eb27224ebefc8d6219bbfa8e74d66735c58a3c919087d7a64f316bcc95"
-    },
-    {
       "path": "bimanual_teleop/recording/sink.py",
       "source_sha256": "7c458b3dc47845667c6fb08b09566d11c4e8d63e2f372eb411fc11fc1b64ccbc",
       "vendored_sha256": "5fcc755b273d4338d9dd05753603319a55e8168b100cd8a2290b007dd6946ab7"
-    },
-    {
-      "path": "bimanual_teleop/recording/spool.py",
-      "source_sha256": "390b6e16333423da0e03d5e5e360ab8348f4963b19090672eee67f7c28018ee1",
-      "vendored_sha256": "07855ad38c9b109c8581e26d9d2e4fc06af71e3aefcc951c257b957e9951e89d"
-    },
-    {
-      "path": "bimanual_teleop/recording/storage.py",
-      "source_sha256": "2460bbfdbcb75d8aa76abbea8076997d8f3521090e40591d1f75d28bdc3372d5",
-      "vendored_sha256": "2460bbfdbcb75d8aa76abbea8076997d8f3521090e40591d1f75d28bdc3372d5"
     },
     {
       "path": "bimanual_teleop/types.py",
@@ -222,5 +177,7 @@
       "source_sha256": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5",
       "vendored_sha256": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5"
     }
-  ]
+  ],
+  "scope_revision_date": "2026-10-14",
+  "scope": "Tianji/Wuji control, kinematics and live camera observation for real-world evaluation; offline data preparation belongs to bimanual-teleop."
 }

@@ -30,7 +30,8 @@ policy:
     beta_end: 0.02
     # 余弦噪声日程；修改日程需要重新训练。
     beta_schedule: squaredcos_cap_v2
-    # 归一化动作限制在 [-1,1]，先保持 true。
+    # true将采样得到的归一化动作截断到[-1,1]；归一化变换本身不截断。
+    # 范围外目标可能无法表达；离线评估用--clip-sample/--no-clip-sample对比。
     clip_sample: true
     # DDIM 末步使用 alpha=1；参考配置建议保持。
     set_alpha_to_one: true
@@ -82,7 +83,7 @@ ema:
 dataloader:
   # 每批32个时间窗口样本；短训配置覆盖为2。
   # RTX PRO 6000上480×640原图实测通过，峰值分配显存约26.6GiB。
-  batch_size: 32
+  batch_size: 64
   # 4个读取子进程；原图batch=32实测约57样本/秒，与8个进程几乎相同。
   # 短训覆盖为0，由主进程读取；设0时必须同时关闭 persistent_workers。
   num_workers: 4
@@ -135,8 +136,9 @@ training:
   rollout_every: 50
   # checkpoint保存间隔，epoch；冒烟设1。
   checkpoint_every: 10
-  # 验证损失间隔，epoch；空验证集自动跳过。
-  val_every: 1
+  # 验证损失间隔，epoch；使用EMA模型的评估模式和固定seed，按样本数加权。
+  # 关闭EMA时使用普通模型的评估模式；空验证集自动跳过。
+  val_every: 5
   # 训练batch动作采样检查间隔，epoch；冒烟设1。
   sample_every: 5
   # 每epoch最多训练batch；null完整训练，冒烟设2。

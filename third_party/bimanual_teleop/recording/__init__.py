@@ -1,1 +1,1 @@
-"""Asynchronous raw recording and offline Diffusion Policy conversion."""
+"""Live camera and device observation dependencies for real-world evaluation."""

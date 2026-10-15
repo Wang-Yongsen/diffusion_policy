@@ -24,6 +24,9 @@ class TinyDataset(BaseImageDataset):
     def get_normalizer(self):
         return None
 
+    def get_validation_dataset(self):
+        return TinyDataset()
+
 
 class TinyPolicy(BaseImagePolicy):
     def __init__(self):
@@ -37,6 +40,9 @@ class TinyPolicy(BaseImagePolicy):
         return torch.optim.SGD(self.parameters(), lr=.1)
 
     def compute_loss(self, batch):
+        if not hasattr(self, 'loss_modes'):
+            self.loss_modes = []
+        self.loss_modes.append((self.training, torch.is_grad_enabled()))
         return (self.weight - 2).square()
 
     def predict_action(self, obs):
@@ -58,7 +64,8 @@ class WorkspaceResumeTests(unittest.TestCase):
                 'training.gradient_accumulate_every=2', 'training.max_train_steps=3',
                 'training.lr_scheduler=constant', 'training.lr_warmup_steps=0',
                 'training.checkpoint_every=1', 'training.sample_every=1',
-                'dataloader.batch_size=1', 'dataloader.pin_memory=false'])
+                'dataloader.batch_size=1', 'dataloader.pin_memory=false',
+                'dataloader.num_workers=0', 'dataloader.persistent_workers=false'])
             OmegaConf.resolve(cfg)
 
         def instantiate(config, **kwargs):
@@ -84,6 +91,46 @@ class WorkspaceResumeTests(unittest.TestCase):
                 restored.run()
                 self.assertEqual((restored.epoch, restored.global_step), (2, 6))
                 torch.testing.assert_close(restored.model.weight, workspace.model.weight)
+
+    def test_actual_loop_uses_ema_in_eval_mode_for_validation(self):
+        from diffusion_policy.model.diffusion.ema_model import EMAModel
+        config_dir = Path(__file__).resolve().parents[1] / 'diffusion_policy/config'
+        with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+            cfg = compose(config_name='train_diffusion_transformer_tianji_rail_workspace', overrides=[
+                'training.device=cpu', 'training.use_ema=true', 'training.num_epochs=1',
+                'training.max_train_steps=2', 'training.lr_scheduler=constant',
+                'training.lr_warmup_steps=0', 'training.checkpoint_every=1',
+                'training.sample_every=1', 'dataloader.batch_size=1',
+                'dataloader.num_workers=0', 'dataloader.persistent_workers=false',
+                'dataloader.pin_memory=false'])
+            OmegaConf.resolve(cfg)
+
+        def instantiate(config, **kwargs):
+            target = config['_target_']
+            if '.policy.' in target:
+                return TinyPolicy()
+            if '.dataset.' in target:
+                return TinyDataset()
+            if '.env_runner.' in target:
+                return TinyRunner(kwargs['output_dir'])
+            if '.ema_model.' in target:
+                return EMAModel(**{key: value for key, value in config.items() if key != '_target_'}, **kwargs)
+            raise AssertionError(target)
+
+        with tempfile.TemporaryDirectory() as output:
+            with patch('hydra.utils.instantiate', side_effect=instantiate), \
+                 patch('wandb.init', return_value=Mock()), patch('wandb.config', Mock()):
+                workspace = TrainDiffusionTransformerHybridWorkspace(cfg, output_dir=output)
+                workspace.run()
+                self.assertEqual(workspace.model.loss_modes, [(True, True)] * 2)
+                self.assertEqual(workspace.ema_model.loss_modes, [(False, False)] * 4)
+                self.assertTrue(workspace.model.training)
+                # EMAModel initializes the averaged model in eval mode; preserve it.
+                self.assertFalse(workspace.ema_model.training)
+                import json
+                records = [json.loads(line) for line in Path(output, 'logs.json.txt').read_text().splitlines()]
+                self.assertEqual(records[-1]['val_loss_uses_ema'], 1)
+                self.assertEqual(records[-1]['val_loss_seed'], 42)
 
 
 if __name__ == '__main__':

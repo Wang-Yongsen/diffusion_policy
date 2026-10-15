@@ -17,6 +17,7 @@ import dill
 import wandb
 import json
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from diffusion_policy.common.policy_evaluation import evaluation_context
 
 @click.command()
 @click.option('-c', '--checkpoint', required=True)
@@ -24,7 +25,11 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 @click.option('-d', '--device', default='cuda:0')
 @click.option('--dataset_path', type=click.Path(exists=True), default=None,
               help='Override the dataset location saved in the checkpoint after moving it.')
-def main(checkpoint, output_dir, device, dataset_path):
+@click.option('--seed', type=int, default=None,
+              help='Evaluation random seed; defaults to the checkpoint training seed.')
+@click.option('--clip-sample/--no-clip-sample', default=None,
+              help='Override DDIM sample clipping for this evaluation only.')
+def main(checkpoint, output_dir, device, dataset_path, seed, clip_sample):
     if os.path.exists(output_dir):
         click.confirm(f"Output path {output_dir} already exists! Overwrite?", abort=True)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -43,16 +48,31 @@ def main(checkpoint, output_dir, device, dataset_path):
     policy = workspace.model
     if cfg.training.use_ema:
         policy = workspace.ema_model
+    scheduler = getattr(policy, 'noise_scheduler', None)
+    if clip_sample is not None:
+        if scheduler is None or not hasattr(scheduler.config, 'clip_sample'):
+            raise click.ClickException('This policy does not support sample clipping overrides.')
+        scheduler.register_to_config(clip_sample=clip_sample)
+    if seed is None:
+        seed = cfg.training.seed
     
     device = torch.device(device)
     policy.to(device)
-    policy.eval()
     
     # run eval
     env_runner = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir)
-    runner_log = env_runner.run(policy)
+    with evaluation_context(policy, seed=seed):
+        runner_log = env_runner.run(policy)
+    settings = dict(
+        checkpoint=str(pathlib.Path(checkpoint).resolve()),
+        dataset_path=str(cfg.task.dataset.dataset_path),
+        model='ema' if cfg.training.use_ema else 'model', seed=seed,
+        clip_sample=bool(scheduler.config.clip_sample) if scheduler is not None and hasattr(scheduler.config, 'clip_sample') else None,
+        num_inference_steps=getattr(policy, 'num_inference_steps', None))
+    pathlib.Path(output_dir, 'eval_settings.json').write_text(
+        json.dumps(settings, indent=2), encoding='utf-8')
     
     # dump log to json
     json_log = dict()
