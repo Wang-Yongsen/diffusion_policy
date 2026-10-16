@@ -20,7 +20,7 @@ from diffusion_policy.third_party.bimanual_teleop.recording.camera import Camera
 from diffusion_policy.third_party.bimanual_teleop.recording.config import load_config as load_camera_config
 from diffusion_policy.third_party.bimanual_teleop.types import ControlProfile
 
-from .tianji_policy_runtime import SIDES, TianjiPolicyRuntime, future_actions
+from .tianji_policy_runtime import INFERENCE_MODES, SIDES, TianjiPolicyRuntime, future_actions, retimed_actions
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,6 +38,8 @@ def load_deployment_config(path):
                 raise ValueError(f"{key} must be finite and positive")
     if config["policy_hz"] not in (10, 30) or config["arm_hz"] != 200:
         raise ValueError("Deployment requires policy_hz in (10, 30) and arm_hz=200")
+    if config.get("inference_mode") not in INFERENCE_MODES:
+        raise ValueError(f"inference_mode must be one of {INFERENCE_MODES}")
     digest = config["expected_model_sha256"]
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise ValueError("expected_model_sha256 must be a lowercase SHA256 digest")
@@ -157,6 +159,7 @@ class TianjiRailEnv:
         self._lock = threading.Lock()
         self._collector = None
         self._arm_sequences = {}
+        self._shadow_chunk_end_ns = 0
         self.histories = {key: deque() for key in ("camera_0", "camera_1", "camera_2",
                          "arms/left", "arms/right", "hands/left", "hands/right")}
         arm_config = load_arm_config(config["arm_config"])
@@ -189,6 +192,7 @@ class TianjiRailEnv:
                 hand.start()
             self.cameras.start()
             self.runtime.start()
+            self._shadow_chunk_end_ns = time.monotonic_ns()
             self._collector = threading.Thread(target=self._collect, name="policy-observation", daemon=True)
             self._collector.start()
         except Exception:
@@ -235,7 +239,7 @@ class TianjiRailEnv:
                             if sample.payload.joint_names != JOINT_NAMES or q.shape != (20,) or not np.isfinite(q).all():
                                 raise RuntimeError(f"{side}: invalid measured hand joints")
                             self._append(f"hands/{side}", sample.header.received_monotonic_ns, q)
-                if self.runtime.active:
+                if self.runtime.active or self.runtime.sync_waiting:
                     problem = self.health_problem()
                     if problem:
                         raise RuntimeError(problem)
@@ -258,6 +262,14 @@ class TianjiRailEnv:
                 if not history or now - history[-1][0] > budget * 1e9:
                     return f"{key}: missing/stale history"
         return None
+
+    def latest_anchor_ns(self):
+        """The anchor get_obs would align to, without health checks or image copies."""
+        with self._lock:
+            if any(not history for history in self.histories.values()):
+                return None
+            state_end = min(self.histories[f"{kind}/{side}"][-1][0] for kind in ("arms", "hands") for side in SIDES)
+            return next((stamp for stamp, _ in reversed(self.histories["camera_0"]) if stamp <= state_end), None)
 
     def get_obs(self):
         if self.error:
@@ -296,12 +308,24 @@ class TianjiRailEnv:
     def exec_actions(self, actions, anchor_ns):
         if self.motion:
             return self.runtime.submit(actions, anchor_ns)
-        selected, times, dropped = future_actions(actions, anchor_ns, time.monotonic_ns(),
-            self.config["policy_hz"], self.config["submit_margin_s"])
+        if self.config["inference_mode"] == "sync":
+            selected, times, dropped = retimed_actions(actions, time.monotonic_ns(),
+                self.config["policy_hz"], self.config["submit_margin_s"])
+            self._shadow_chunk_end_ns = int(times[-1]) + round(1e9 / self.config["policy_hz"])
+        else:
+            selected, times, dropped = future_actions(actions, anchor_ns, time.monotonic_ns(),
+                self.config["policy_hz"], self.config["submit_margin_s"])
         self.emit("shadow_schedule", times_ns=times, actions=selected, dropped_steps=dropped)
         return dropped
 
+    def chunk_completed_ns(self):
+        """Sync mode: when the robot entered hold after the last chunk, or None while a chunk executes."""
+        if self.motion:
+            return self.runtime.chunk_completed_ns
+        return self._shadow_chunk_end_ns if time.monotonic_ns() >= self._shadow_chunk_end_ns else None
+
     def pause(self, reason="Operator pause"):
+        self._shadow_chunk_end_ns = time.monotonic_ns()
         self.runtime.pause(reason)
 
     def close(self):

@@ -15,7 +15,7 @@ Python名称为 `diffusion_policy.third_party.bimanual_teleop`，由 `setup.py` 
 
 快照来自用户工作区的 `bimanual-teleop`，提交为 `540cb01fd345f1cfb2e562ec90e0fbffc9c252f8`，取入时包含未提交的已验收修改，因此提交号不能独立还原此次快照。[清单](bimanual_teleop/manifest.json)记录取入时每个源文件和本地文件的 SHA-256。只取天机导轨所需的传递依赖，没有迁入完整遥操作程序、Quest 或手套采集入口。
 
-本地调整包括包导入名称、默认配置资源定位及说明链接；伺服约束和设备协议沿用源实现。2026-10-14移除了离线整理、转换、原始缓存存储及其专用辅助代码，保留真机评估依赖。模型及厂家Python／`.so`文件保持原字节，厂家清单继续验证其摘要。
+本地调整包括包导入名称、默认配置资源定位及说明链接；伺服约束和设备协议沿用源实现。2026-10-14移除了离线整理、转换、原始缓存存储及其专用辅助代码，保留真机评估依赖。2026-10-16按 bimanual-teleop 提交 `284b1e3` 同步相机约定：`camera_1` 为机器人左臂相机，RGB 读取后旋转 180°；`camera_2` 为右臂相机；相机元数据记录 `image_rotation_deg`。模型及厂家Python／`.so`文件保持原字节，厂家清单继续验证其摘要。
 
 源项目未提供项目级 LICENSE，不能据此声明为某一种开源许可证。天机官方 SDK 的 Apache-2.0 [LICENSE](bimanual_teleop/vendor/tianji/LICENSE)及厂家来源清单原样保留；无极 SDK 和 RealSense 通过环境依赖安装，适用各自的许可证。来源信息用于追溯，运行不访问来源仓库。
 

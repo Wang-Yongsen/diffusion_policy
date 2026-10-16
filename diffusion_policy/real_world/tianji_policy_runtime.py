@@ -10,6 +10,10 @@ from diffusion_policy.third_party.bimanual_teleop.types import DeviceCommand, Jo
 from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import JOINT_LIMITS_RAD, JOINT_NAMES
 
 SIDES = ("left", "right")
+INFERENCE_MODES = ("async", "sync")
+# Equals the Tianji driver watchdog, which bounds every accepted target anyway;
+# arm IK plus submission has been measured up to 56 ms under parent-process load.
+HOLD_TTL_NS = 80_000_000
 
 
 def split_action(action):
@@ -25,10 +29,15 @@ def split_action(action):
     return poses, hands
 
 
-def future_actions(actions, anchor_ns, now_ns, hz=30, margin_s=.01):
+def _prediction_chunk(actions):
     actions = np.asarray(actions, dtype=np.float64)
     if actions.ndim != 2 or actions.shape[1] != 52 or not len(actions) or not np.isfinite(actions).all():
         raise ValueError("Require nonempty finite N x 52 predictions")
+    return actions
+
+
+def future_actions(actions, anchor_ns, now_ns, hz=30, margin_s=.01):
+    actions = _prediction_chunk(actions)
     stamps = int(anchor_ns) + np.rint(np.arange(len(actions)) * 1e9 / hz).astype(np.int64)
     keep = stamps > now_ns + round(margin_s * 1e9)
     if not keep.any():
@@ -37,6 +46,13 @@ def future_actions(actions, anchor_ns, now_ns, hz=30, margin_s=.01):
             f"last action offset={(stamps[-1] - anchor_ns) / 1e6:.1f} ms, "
             f"submit margin={margin_s * 1000:.1f} ms)")
     return actions[keep].copy(), stamps[keep], int((~keep).sum())
+
+
+def retimed_actions(actions, now_ns, hz=30, margin_s=.01):
+    """Synchronous chunks start after submission; valid only if the robot held still during inference."""
+    actions = _prediction_chunk(actions)
+    stamps = int(now_ns) + round(margin_s * 1e9) + np.rint(np.arange(len(actions)) * 1e9 / hz).astype(np.int64)
+    return actions.copy(), stamps, 0
 
 
 def validate_actions(actions, times, reference, config):
@@ -85,6 +101,10 @@ class TianjiPolicyRuntime:
         self._held_until_ns = None
         self._last_nominal_ns = None
         self._generation = 0
+        self.sync = config["inference_mode"] == "sync"
+        # Sync only: engaged and holding the last target until the next prediction is submitted.
+        self.sync_waiting = False
+        self.chunk_completed_ns = None
 
     def start(self):
         for kind, side in (("arm", None), ("hand", "left"), ("hand", "right")):
@@ -102,13 +122,21 @@ class TianjiPolicyRuntime:
             self._times = np.empty(0, dtype=np.int64)
             self._held_until_ns = self._last_nominal_ns = None
             self._generation += 1
+            self.sync_waiting = self.sync and arm_ready
+            self.chunk_completed_ns = self.clock_ns() if self.sync_waiting else None
 
     def submit(self, actions, anchor_ns):
         with self._lock:
             if self.fault or self._stop.is_set():
                 raise RuntimeError(self.fault or "Runtime closed")
-            actions, times, dropped = future_actions(actions, anchor_ns, self.clock_ns(),
-                self.config["policy_hz"], self.config["submit_margin_s"])
+            if self.sync:
+                if self.active:
+                    raise RuntimeError("Synchronous chunk is still executing")
+                actions, times, dropped = retimed_actions(actions, self.clock_ns(),
+                    self.config["policy_hz"], self.config["submit_margin_s"])
+            else:
+                actions, times, dropped = future_actions(actions, anchor_ns, self.clock_ns(),
+                    self.config["policy_hz"], self.config["submit_margin_s"])
             validate_actions(actions, times, self._last_action, self.config)
             held_until = int(self._times[-1]) + round(1e9 / self.config["policy_hz"]) if self.active else None
             if held_until is not None and self.clock_ns() >= held_until:
@@ -117,6 +145,8 @@ class TianjiPolicyRuntime:
             self._actions, self._times = actions, times
             self._held_until_ns = held_until
             self.active = True
+            self.sync_waiting = False
+            self.chunk_completed_ns = None
             self.emit("schedule", generation=self._generation, times_ns=times,
                       actions=actions, dropped_steps=dropped)
             return dropped
@@ -128,6 +158,8 @@ class TianjiPolicyRuntime:
             self._times = np.empty(0, dtype=np.int64)
             self._generation += 1
             self.arm_ready = False
+            self.sync_waiting = False
+            self.chunk_completed_ns = None
             if fault:
                 self.fault = self.fault or str(reason)
         errors = []
@@ -153,6 +185,16 @@ class TianjiPolicyRuntime:
             raise RuntimeError("Previous target expired before the next scheduled action")
         return self._last_action
 
+    def _complete_chunk(self, now):
+        self._last_action = self._actions[-1].copy()
+        self._last_nominal_ns = int(self._times[-1])
+        self._actions = np.empty((0, 52))
+        self._times = np.empty(0, dtype=np.int64)
+        self.active = False
+        self.sync_waiting = True
+        self.chunk_completed_ns = int(now)
+        self.emit("chunk_complete", generation=self._generation, completed_ns=int(now))
+
     def tick(self, kind, side=None):
         """One control tick, also used by fake-clock tests."""
         if kind == "hand" and side is None:
@@ -163,15 +205,23 @@ class TianjiPolicyRuntime:
             with self._lock:
                 now = self.clock_ns()
                 active, generation = self.active, self._generation
-                if active:
+                if active and self.sync and now >= self._times[-1] + round(1e9 / self.config["policy_hz"]):
+                    self._complete_chunk(now)
+                    active = False
+                waiting = self.sync_waiting
+                if active or waiting:
                     problem = self.health()
                     if problem:
                         raise RuntimeError(problem)
+                if active:
                     action = self._target(now)
                     expiry = int(self._times[-1]) + round(1e9 / self.config["policy_hz"])
+                    if self.sync:
+                        # Sync holds the final step after the chunk, so no step must expire at coverage end.
+                        expiry = max(expiry, now + HOLD_TTL_NS)
                 else:
                     # Holding is a distinct mode with the last accepted hand target.
-                    action, expiry = self._last_action, now + 50_000_000
+                    action, expiry = self._last_action, now + HOLD_TTL_NS
                 nominal = self._last_nominal_ns
             if action is None:
                 return
@@ -179,7 +229,7 @@ class TianjiPolicyRuntime:
             command_id = f"{generation}-{side or kind}-{now}"
             if kind == "arm":
                 if not self.arm_ready or not self.arm.driver.engaged:
-                    if active:
+                    if active or waiting:
                         raise RuntimeError("Arm engagement was lost")
                     return
                 with self._lock:
@@ -191,7 +241,7 @@ class TianjiPolicyRuntime:
             else:
                 hand = self.hands[side]
                 if not hand.enabled:
-                    if active:
+                    if active or waiting:
                         raise RuntimeError(f"{side} Hand2 engagement was lost")
                     return
                 if not hand.health(check_latch=True).ready:

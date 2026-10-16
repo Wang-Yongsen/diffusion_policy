@@ -7,6 +7,15 @@ import time
 
 from .sink import Record
 
+# Main view, robot left arm, robot right arm; serials are bound in recording.yaml.
+# Correct the upside-down left-arm mounting, as bimanual-teleop does before recording.
+RGB_ROTATION_DEG = {"camera_0": 0, "camera_1": 180, "camera_2": 0}
+
+
+def orient_rgb(camera, image):
+    """Apply the rig's mounting correction; the returned pixels may be a view."""
+    return image[::-1, ::-1] if RGB_ROTATION_DEG.get(camera, 0) == 180 else image
+
 
 class _ClockBridge:
     def __init__(self, clock_ns, wall_ns):
@@ -107,7 +116,8 @@ class CameraRig:
                 profile = pipeline.start(settings)
                 color = profile.get_stream(self.rs.stream.color)
                 info = {"serial": serial, "model": device.get_info(self.rs.camera_info.name),
-                        "resolution": [640, 480], "fps": 30, "rgb_intrinsics": _intrinsics(color)}
+                        "resolution": [640, 480], "fps": 30, "rgb_intrinsics": _intrinsics(color),
+                        "image_rotation_deg": RGB_ROTATION_DEG[name]}
                 if depth:
                     depth_profile = profile.get_stream(self.rs.stream.depth)
                     extrinsics = depth_profile.get_extrinsics_to(color)
@@ -196,7 +206,10 @@ class CameraRig:
                 self._preview_next_ns[key] = stamp + 200_000_000
             if mode not in ("record", "preview"):
                 return
-            image = self._np.asarray(frame.get_data()).copy()
+            image = self._np.asarray(frame.get_data())
+            if kind == "rgb":
+                image = orient_rgb(name, image)
+            image = image.copy()
             record = Record(f"cameras/{name}/{kind}", stamp, sequence,
                             {"source_time_ms": source_ms})
             try:

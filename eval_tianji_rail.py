@@ -20,6 +20,7 @@ from diffusion_policy.third_party import bimanual_teleop
 
 from diffusion_policy.env_runner.tianji_rail_real_runner import TianjiRailRealRunner, write_json
 from diffusion_policy.real_world.policy_inference_process import PolicyInferenceProcess
+from diffusion_policy.real_world.tianji_policy_runtime import INFERENCE_MODES
 from diffusion_policy.real_world.tianji_rail_env import (
     PROJECT_ROOT, TianjiRailEnv, load_deployment_config, preprocess_observation,
 )
@@ -90,12 +91,15 @@ def main(argv=None):
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
     parser.add_argument("--device", help="覆盖配置中的模型设备，例如 cpu 或 cuda:0")
+    parser.add_argument("--inference-mode", choices=INFERENCE_MODES,
+                        help="覆盖配置中的推理模式：async 推理与执行并行；sync 推理期间保持，动作块执行完再观测")
     parser.add_argument("--output", type=Path, help="新建会话目录，不覆盖已有目录")
     parser.add_argument("--check-only", action="store_true", help="只重载模型与模拟输入推理，不连接设备")
     parser.add_argument("--motion", action="store_true", help="允许手动接合；必须已填写工作空间")
     args = parser.parse_args(argv)
     config = load_deployment_config(args.config)
     device = args.device or config["device"]
+    config["inference_mode"] = args.inference_mode or config["inference_mode"]
     output = args.output or Path(config["output_dir"]) / time.strftime("%Y%m%d-%H%M%S")
     if output.exists():
         raise FileExistsError(f"Evaluation output already exists: {output}")
@@ -106,7 +110,7 @@ def main(argv=None):
     torch.set_num_threads(1)
     policy, cfg, state_key = load_policy(args.checkpoint, device)
     validate_policy_frequency(cfg, config["policy_hz"])
-    if config["replanning_steps"] >= policy.n_action_steps:
+    if config["inference_mode"] == "async" and config["replanning_steps"] >= policy.n_action_steps:
         raise ValueError("replanning_steps must be smaller than checkpoint n_action_steps")
     if config["history_s"] <= (policy.n_obs_steps - 1) / config["policy_hz"] + config["max_state_gap_s"]:
         raise ValueError("history_s cannot cover checkpoint observation window")
@@ -154,6 +158,7 @@ def main(argv=None):
         metadata["kinematics"] = {"model_sha256": env.kinematics.model.digest,
                                   "library_path": str(env.kinematics.library_path)}
         write_json(output / "session.json", metadata)
+        print(f"推理模式：{config['inference_mode']}")
         report = runner.run()
         print(f"运动试验 {report['motion_trials']} 次，成功率 {report['success_rate']}；记录：{output}")
     except Exception as error:

@@ -9,7 +9,8 @@
     "Python imports use the host package namespace",
     "Default configurations resolve to host package resources",
     "Bundled SDK README uses project-local documentation",
-    "2026-10-14: removed offline finalization/conversion CLI, spool/storage code and its unused console/affinity helpers; retained camera/config/sink for live observation"
+    "2026-10-14: removed offline finalization/conversion CLI, spool/storage code and its unused console/affinity helpers; retained camera/config/sink for live observation",
+    "2026-10-16: synced camera ordering from bimanual-teleop 284b1e311b13d81e5bb65b68f96c4e3da7ab7c6f; camera_1 is the robot left arm with its RGB rotated 180 degrees, camera_2 is the robot right arm, and camera metadata records image_rotation_deg"
   ],
   "files": [
     {
@@ -110,7 +111,7 @@
     {
       "path": "bimanual_teleop/recording/camera.py",
       "source_sha256": "a008a270aa4520d21f5395ece45ea731de238a8f5b12e3b86229a3fa9060f6cd",
-      "vendored_sha256": "a008a270aa4520d21f5395ece45ea731de238a8f5b12e3b86229a3fa9060f6cd"
+      "vendored_sha256": "3a51d1950f610be4cf13c061ef39ed0f469aa77fe540396d69463aa8dff106c8"
     },
     {
       "path": "bimanual_teleop/recording/config.py",

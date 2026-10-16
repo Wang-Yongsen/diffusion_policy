@@ -16,7 +16,11 @@ hand_hz: 120
 state_hz: 100
 # 历史长度（秒），须覆盖 checkpoint 的观测窗口。
 history_s: 2.0
-# 两次重规划的最短间隔为 replanning_steps / policy_hz 秒。
+# 推理模式；入口 --inference-mode 可覆盖。
+# async：推理与执行并行，动作保持观测锚点的计划时刻，过期步骤丢弃。
+# sync：推理期间保持上一目标；返回的 n_action_steps 步从提交时刻重新计时并全部执行，执行完再取新观测。
+inference_mode: async
+# 仅 async：两次重规划的最短间隔为 replanning_steps / policy_hz 秒。
 replanning_steps: 1
 # 下发前保留的时间裕量（秒）；过期动作直接丢弃。
 submit_margin_s: 0.01
