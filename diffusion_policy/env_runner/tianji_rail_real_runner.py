@@ -214,7 +214,7 @@ class TianjiRailRealRunner:
                     self._stop.wait(.01)
                     continue
                 observed = time.monotonic_ns()
-                if anchor_previous is not None and anchor - anchor_previous < self.env.config["replanning_steps"] * 1e9 / 30:
+                if anchor_previous is not None and anchor - anchor_previous < self.env.config["replanning_steps"] * 1e9 / self.env.config["policy_hz"]:
                     self._stop.wait(.003)
                     continue
                 process_predict = getattr(self.policy, "predict_observation", None)

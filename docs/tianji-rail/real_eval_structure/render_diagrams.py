@@ -69,11 +69,11 @@ FIGURES = [
              node('begin', (650, 785, 500, 150), 'Runner开始一条试验',
                   '影子自动开始；运动由s触发', '运动接合设备；每条试验重置策略', '启动事件日志及本次推理', group='loop'),
              node('observe', (650, 1010, 500, 145), 'Env.get_obs：七路历史对齐',
-                  '三路RGB + 双臂实际FK + 双手关节', '取有效主相机锚点t0；检查覆盖与时效', '通常查询 t0−33.3 ms 与 t0', group='loop'),
+                  '三路RGB + 双臂实际FK + 双手关节', '取有效主相机锚点t0；检查覆盖与时效', '当前查询 t0−100 ms 与 t0', group='loop'),
              node('predict', (650, 1225, 500, 145), 'Runner：预处理 + GPU推理',
                   'Policy.predict_action', '当前配置返回8步 × 52维动作', '实际观测与动作长度从checkpoint读取', group='loop'),
              node('schedule', (650, 1440, 500, 155), 'Env.exec_actions',
-                  '保留 t0+i/30；丢弃过期动作', '影子：只记录 shadow_schedule', '运动：校验目标并更新Runtime队列', group='loop'),
+                  '保留 t0+i/10；丢弃过期动作', '影子：只记录 shadow_schedule', '运动：校验目标并更新Runtime队列', group='loop'),
              node('control', (1235, 1440, 500, 155), 'Runtime独立推进目标',
                   '双臂200 Hz；左右手各120 Hz', '按时刻选目标，再伺服 / 限速提交', '相机与实际反馈持续更新历史', group='loop'),
              node('stop', (65, 1010, 500, 240), '结束本次试验 / 请求暂停',
@@ -94,7 +94,7 @@ FIGURES = [
              edge('observe', 'stop', ('left', 'right'), [(595, 1082), (595, 1130)], label='失效'),
              edge('stop', 'save'),
          ], notes=[
-             '“30 Hz”是训练和目标时间网格；重规划锚点至少前进66.7 ms，实际推理频率受耗时与观测可用性影响。',
+             '“10 Hz”是训练和目标时间网格；重规划锚点至少前进100 ms，实际推理频率受耗时与观测可用性影响。',
              '人工结束、超时和故障可终止试验；SDK接受不等于物理到位；q退出不会自动回位。']),
 ]
 

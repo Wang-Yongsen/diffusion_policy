@@ -48,6 +48,20 @@ def load_policy(checkpoint, device):
     return policy, cfg, key
 
 
+def validate_policy_frequency(cfg, policy_hz):
+    """Historical rail checkpoints without frequency metadata were trained at 30 Hz."""
+    dataset_hz = cfg.task.dataset.get("sample_hz", None)
+    checkpoint_hz = cfg.task.get("sample_hz", dataset_hz if dataset_hz is not None else 30)
+    values = [checkpoint_hz, policy_hz] + ([] if dataset_hz is None else [dataset_hz])
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not np.isfinite(value) or value <= 0 for value in values):
+        raise ValueError("Checkpoint and deployment sampling frequencies must be finite and positive")
+    if any(not np.isclose(value, checkpoint_hz, rtol=0, atol=1e-8) for value in values):
+        raise ValueError(f"Checkpoint sample_hz={checkpoint_hz} does not match deployment policy_hz={policy_hz} "
+                         "or dataset sample_hz; train a model on matching-frequency data")
+    return float(checkpoint_hz)
+
+
 def check_inference(policy, cfg, iterations=3):
     obs = {f"camera_{i}": np.zeros((policy.n_obs_steps, 480, 640, 3), np.uint8) for i in range(3)}
     obs.update(robot_eef_pose=np.zeros((policy.n_obs_steps, 12), np.float32),
@@ -91,6 +105,7 @@ def main(argv=None):
     # BLAS pool. Limit PyTorch as well, before model initialization/preflight.
     torch.set_num_threads(1)
     policy, cfg, state_key = load_policy(args.checkpoint, device)
+    validate_policy_frequency(cfg, config["policy_hz"])
     if config["replanning_steps"] >= policy.n_action_steps:
         raise ValueError("replanning_steps must be smaller than checkpoint n_action_steps")
     if config["history_s"] <= (policy.n_obs_steps - 1) / config["policy_hz"] + config["max_state_gap_s"]:

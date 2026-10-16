@@ -36,8 +36,8 @@ def load_deployment_config(path):
         if key.endswith(("_s", "_hz", "_rad", "_m", "_m_s", "_rad_s")):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{key} must be finite and positive")
-    if config["policy_hz"] != 30 or config["arm_hz"] != 200:
-        raise ValueError("First deployment requires policy_hz=30 and arm_hz=200")
+    if config["policy_hz"] not in (10, 30) or config["arm_hz"] != 200:
+        raise ValueError("Deployment requires policy_hz in (10, 30) and arm_hz=200")
     digest = config["expected_model_sha256"]
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise ValueError("expected_model_sha256 must be a lowercase SHA256 digest")

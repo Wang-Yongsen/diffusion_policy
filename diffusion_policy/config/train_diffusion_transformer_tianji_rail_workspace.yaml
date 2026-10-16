@@ -8,7 +8,8 @@ _target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspac
 # 与任务共用形状，图像尺寸只修改 task.image_shape。
 shape_meta: ${task.shape_meta}
 # 完整预测16步、观测2步、执行8步；执行标签为 [n_obs_steps-1:n_obs_steps-1+n_action_steps]。
-# 修改时应满足 n_obs_steps-1+n_action_steps <= horizon；30 Hz 下16步约0.53秒。
+# 修改时应满足 n_obs_steps-1+n_action_steps <= horizon。
+# 当前10 Hz：两步观测相隔100 ms，16步标签首尾跨度1.5秒；8步执行段覆盖0.8秒。
 horizon: 16
 n_obs_steps: 2
 n_action_steps: 8
@@ -81,8 +82,8 @@ ema:
   min_value: 0.0
   max_value: 0.9999
 dataloader:
-  # 每批32个时间窗口样本；短训配置覆盖为2。
-  # RTX PRO 6000上480×640原图实测通过，峰值分配显存约26.6GiB。
+  # 每批64个时间窗口样本；短训配置覆盖为2。
+  # 历史batch=32原图测试的峰值分配显存约26.6GiB，不代表batch=64占用。
   batch_size: 64
   # 4个读取子进程；原图batch=32实测约57样本/秒，与8个进程几乎相同。
   # 短训覆盖为0，由主进程读取；设0时必须同时关闭 persistent_workers。

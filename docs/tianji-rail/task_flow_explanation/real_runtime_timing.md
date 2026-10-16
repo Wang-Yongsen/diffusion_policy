@@ -1,6 +1,8 @@
 # 真机部署：闭环运行的时间序列
 
-核对日期：2026-10-08。本文对应当前 `TianjiRailEnv → TianjiRailRealRunner → TianjiPolicyRuntime` 的运动模式。图中推理耗时均为讲解假设，没有连接设备或测量硬件延迟。
+本页图示保留2026-10-08的**历史30 Hz示例**，用于解释 `TianjiRailEnv → TianjiRailRealRunner → TianjiPolicyRuntime` 的队列与过期机制。图中推理耗时均为讲解假设，没有连接设备或测量硬件延迟。
+
+**2026-10-16当前配置已改为10 Hz**：输入查询 `t0−100 ms` 与 `t0`，动作时刻为 `t0+i/10` 秒，8步最后目标为700 ms、覆盖至800 ms；`replanning_steps=1`使重规划锚点最少前进100 ms。下文33.3／66.7／233.3／266.7 ms数值和图片仅属于旧30 Hz示例，不能用来解释新10 Hz模型的当前时间预算。当前流程见[真机评估说明](../real_eval_structure/README.md)。
 
 ## 1. 两轮预测怎样衔接
 

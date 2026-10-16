@@ -37,7 +37,7 @@ FIGURES = [
          ], nodes=[
              node("capture", (75, 220, 500, 250), "1  示范采集", "Quest / 手套 → 双臂双手", "三路 RGB + 实测状态 + 已提交指令", "cli/teleop_quest_tianji.py", "recording/recorder.py + sink.py", "recording/camera.py + spool.py", group="data"),
              node("finalize", (650, 220, 500, 250), "2  原始记录整理", "raw_spool → MP4 + raw.zarr", "检查视频、重建实测末端位姿", "recording/finalize.py", "recording/storage.py", "BT入口：scripts/finalize_recording.py", group="data"),
-             node("convert", (1225, 220, 500, 250), "3  对齐、修复与转换", "30 Hz；图像匹配 / 状态插值", "动作保持过去目标；无效点切段", "recording/convert.py", "configs/recording_conversion.yaml", "BT入口：scripts/convert_recording.py", group="data"),
+             node("convert", (1225, 220, 500, 250), "3  对齐、修复与转换", "10 Hz；图像匹配 / 状态插值", "动作保持过去目标；无效点切段", "recording/convert.py", "configs/recording_conversion.yaml", "BT入口：scripts/convert_recording.py", group="data"),
              node("zarr", (390, 510, 1020, 50), "输出：训练 zarr · 三路 RGB / 12维 EEF / 40维手关节 / 52维动作 / 边界及追溯", group="data"),
              node("dataset", (75, 715, 500, 265), "4  Dataset + DataLoader", "按原始演示划分训练 / 验证", "片段内采样：2步观测 + 16步动作", "原图480×640；训练来源拟合归一化", "dataset/tianji_rail_image_dataset.py", "model/common/normalizer.py", group="train"),
              node("workspace", (650, 715, 500, 265), "5  Workspace", "训练循环、反向传播、优化器", "学习率、EMA、验证、日志与保存", "workspace/", "train_diffusion_transformer_", "hybrid_workspace.py", group="train"),
@@ -83,7 +83,7 @@ FIGURES = [
          ], notes=["Policy核心：policy/diffusion_transformer_hybrid_image_policy.py；归一化：model/common/normalizer.py。",
                     "U-Net替代实现：model/diffusion/conditional_unet1d.py；当前导轨配置使用上面的Transformer。"]),
     dict(name="03-real-loop", size=(1800, 1730), title="真机闭环：观测、推理与设备控制各负责什么",
-         subtitle="30 Hz 是观测与动作的时间网格；推理独立运行，双臂200 Hz、左右手各120 Hz推进目标。",
+         subtitle="10 Hz 是观测与动作的时间网格；推理独立运行，双臂200 Hz、左右手各120 Hz推进目标。",
          groups=[
              group("entry", (40, 140, 1720, 215), "A · 评估入口与模型加载"),
              group("env", (40, 410, 820, 475), "B · TianjiRailEnv 〔实时观测与设备生命周期〕"),
@@ -94,10 +94,10 @@ FIGURES = [
          ], nodes=[
              node("entry_n", (75, 215, 1650, 115), "eval_tianji_rail.py + config/tianji_rail_real_eval.yaml", "读取checkpoint的配置 / EMA / 归一化器；检查模型与设备配置，创建Env和Runner", "--check-only：模拟输入检查；默认：真实观测影子模式；--motion + 手动开始：运动试验", group="entry"),
              node("history", (75, 495, 750, 145), "七路带时间戳历史缓存", "三路RGB + 左右臂实际关节FK + 左右手关节", "real_world/tianji_rail_env.py", "复用BT：recording/camera.py、devices/tianji/model.py", group="env"),
-             node("align", (75, 705, 750, 155), "get_obs → align_observation", "两步30 Hz历史：图像最近匹配；状态线性 / SLERP", "检查数据年龄、图像偏差、三路跨度、状态缺口", "preprocess_observation：与checkpoint图像设置一致", group="env"),
-             node("infer", (975, 495, 750, 145), "_infer → policy.predict_action", "独立推理线程，读对齐观测；输出8步52维目标", "env_runner/tianji_rail_real_runner.py", "按replanning_steps检查新观测；不保证推理30 Hz", group="runner"),
+             node("align", (75, 705, 750, 155), "get_obs → align_observation", "两步10 Hz历史：图像最近匹配；状态线性 / SLERP", "检查数据年龄、图像偏差、三路跨度、状态缺口", "preprocess_observation：与checkpoint图像设置一致", group="env"),
+             node("infer", (975, 495, 750, 145), "_infer → policy.predict_action", "独立推理线程，读对齐观测；输出8步52维目标", "env_runner/tianji_rail_real_runner.py", "按replanning_steps检查新观测；不保证推理10 Hz", group="runner"),
              node("trial", (975, 705, 750, 155), "run / _begin / _end", "s开始；p接管；y成功；n失败；q退出", "操作员定义结果，记录超时、设备中止与接管", "切换试验时阻止旧推理结果发布", group="runner"),
-             node("schedule", (975, 1070, 750, 250), "exec_actions → runtime.submit → 控制线程", "名义时刻 t0 + i/30 秒；丢弃已过期动作", "校验工作空间 / 跳变 / 速度；替换未来队列", "双臂线程200 Hz；左手、右手各120 Hz", "real_world/tianji_policy_runtime.py", "故障或覆盖耗尽：清队列并请求暂停", group="runtime"),
+             node("schedule", (975, 1070, 750, 250), "exec_actions → runtime.submit → 控制线程", "名义时刻 t0 + i/10 秒；丢弃已过期动作", "校验工作空间 / 跳变 / 速度；替换未来队列", "双臂线程200 Hz；左手、右手各120 Hz", "real_world/tianji_policy_runtime.py", "故障或覆盖耗尽：清队列并请求暂停", group="runtime"),
              node("devices", (75, 1070, 750, 250), "绝对EEF / 手关节目标 → 设备执行", "control/arm/cartesian.py + arm/servo.py", "devices/tianji/model.py：FK / IK", "devices/tianji/driver.py + sdk.py", "devices/wuji/adapter.py：左右手驱动", "实际图像 / 状态反馈返回Env", group="device"),
              node("log", (75, 1490, 1650, 120), "TrialRecorder + summarize_trials 〔env_runner/tianji_rail_real_runner.py〕", "逐试验：trial.json / events.jsonl / timing.json，不保存视频；会话：session.json / summary.json", "成功率 = 成功运动试验 / 所有已开始运动试验；影子试验不进入分母", group="record"),
          ], edges=[

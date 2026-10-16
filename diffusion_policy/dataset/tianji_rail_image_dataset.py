@@ -16,7 +16,7 @@ from diffusion_policy.model.common.normalizer import LinearNormalizer
 class TianjiRailImageDataset(BaseImageDataset):
     def __init__(self, dataset_path, shape_meta, horizon=16, n_obs_steps=2,
                  seed=42, val_ratio=0., image_shape=(3, 240, 320),
-                 resize_enabled=True, resize_interpolation="area"):
+                 resize_enabled=True, resize_interpolation="area", sample_hz=None):
         if type(horizon) is not int or type(n_obs_steps) is not int or not 1 <= n_obs_steps <= horizon:
             raise ValueError("Require 1 <= n_obs_steps <= horizon, both integers")
         if not 0 <= val_ratio < 1:
@@ -73,6 +73,28 @@ class TianjiRailImageDataset(BaseImageDataset):
                 raise ValueError(f"Invalid {name}: must partition all frames")
         if not np.isin(episode_ends, self.segment_ends).all():
             raise ValueError("segment_ends must preserve episode boundaries")
+        # Older checkpoint configs omit sample_hz. New experiments explicitly
+        # require both declared and measured sampling intervals to agree.
+        self.sample_hz = sample_hz
+        if sample_hz is not None:
+            if (isinstance(sample_hz, bool) or not isinstance(sample_hz, (int, float))
+                    or not np.isfinite(sample_hz) or sample_hz <= 0):
+                raise ValueError("sample_hz must be finite and positive")
+            declared_hz = self.root.attrs.get("target_fps")
+            if (isinstance(declared_hz, bool) or not isinstance(declared_hz, (int, float))
+                    or not np.isfinite(declared_hz) or not np.isclose(declared_hz, sample_hz, rtol=0, atol=1e-8)):
+                raise ValueError(f"Dataset target_fps={declared_hz} does not match sample_hz={sample_hz}; re-export the data")
+            if "timestamp" not in self.data or self.data["timestamp"].shape != (count,):
+                raise ValueError("Sampling-frequency validation requires data/timestamp with one value per frame")
+            times = np.asarray(self.data["timestamp"][:], dtype=np.float64)
+            if not np.isfinite(times).all():
+                raise ValueError("Nonfinite data/timestamp")
+            intervals = np.diff(times)
+            # Source time may reset at episode/segment boundaries.
+            within_segment = np.ones(len(intervals), dtype=bool)
+            within_segment[self.segment_ends[:-1] - 1] = False
+            if not np.allclose(intervals[within_segment], 1 / sample_hz, rtol=0, atol=1e-6):
+                raise ValueError(f"Within-segment timestamp intervals do not match sample_hz={sample_hz}")
         segments = meta.attrs.get("segments", [])
         if segments and len(segments) != len(self.segment_ends):
             raise ValueError("Segment metadata count differs from segment_ends")

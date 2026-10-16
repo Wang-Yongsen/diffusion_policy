@@ -6,8 +6,9 @@ camera_config: diffusion_policy/config/recording.yaml
 expected_model_sha256: ce20b1a80974c3ed58cdac4973152625096c8ad93a779e5fd4108c26ce19bd52
 # 默认只读设备；实际下发还必须使用入口的 --motion 并手动开始每次试验。
 device: cuda:0
-# 已有数据按 30 Hz 转换；更改频率需要核对训练标签，首版仅允许 30。
-policy_hz: 30
+# 观测历史及预测动作的时间网格；须使用10 Hz数据训练的checkpoint。
+# 部署入口检查与checkpoint的task.sample_hz一致；旧30 Hz模型不能直接用于此配置。
+policy_hz: 10
 # 双臂复用 200 Hz 伺服，双手 120 Hz；推理不占用控制线程。
 arm_hz: 200
 hand_hz: 120
@@ -16,7 +17,7 @@ state_hz: 100
 # 历史长度（秒），须覆盖 checkpoint 的观测窗口。
 history_s: 2.0
 # 两次重规划的最短间隔为 replanning_steps / policy_hz 秒。
-replanning_steps: 2
+replanning_steps: 1
 # 下发前保留的时间裕量（秒）；过期动作直接丢弃。
 submit_margin_s: 0.01
 # 图像年龄、低维反馈年龄、相邻状态插值间隔上限（秒）。
@@ -30,7 +31,7 @@ max_camera_span_s: 0.05
 max_position_jump_m: 0.04
 max_rotation_jump_rad: 0.3
 max_hand_jump_rad: 0.3
-# 相邻 30 Hz 策略目标的速度上限；双臂还有原执行器的关节约束。
+# 相邻策略目标按真实时间间隔检查速度；双臂还有原执行器的关节约束。
 max_position_speed_m_s: 0.15
 max_rotation_speed_rad_s: 0.8
 max_hand_speed_rad_s: 2.0

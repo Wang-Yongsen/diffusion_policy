@@ -2,6 +2,10 @@
 defaults:
   - train_diffusion_transformer_tianji_rail_workspace
   - _self_
+task:
+  env_runner:
+    # 只用两个验证窗口检查离线动作评估接口。
+    max_windows: 2
 dataloader:
   # 每批2个时间窗口样本；降低短训练的显存与计算开销。
   batch_size: 2
@@ -14,6 +18,10 @@ training:
   num_epochs: 2
   # 每轮最多2批；两轮共4批，不遍历完整训练集。
   max_train_steps: 2
+  # 验证也只检查两批，避免短训练遍历整个验证集。
+  max_val_steps: 2
+  # 短训练每轮验证，与每轮checkpoint的val_loss监控保持一致。
+  val_every: 1
   # 短训练关闭学习率预热，正式配置仍为500个优化器更新步。
   lr_warmup_steps: 0
   # 每轮保存模型，便于立即检查 checkpoint 重载与恢复。

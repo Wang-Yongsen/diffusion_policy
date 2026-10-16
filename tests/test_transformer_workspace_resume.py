@@ -63,7 +63,7 @@ class WorkspaceResumeTests(unittest.TestCase):
                 'training.device=cpu', 'training.use_ema=false', 'training.num_epochs=2',
                 'training.gradient_accumulate_every=2', 'training.max_train_steps=3',
                 'training.lr_scheduler=constant', 'training.lr_warmup_steps=0',
-                'training.checkpoint_every=1', 'training.sample_every=1',
+                'training.checkpoint_every=1', 'training.sample_every=1', 'training.val_every=1',
                 'dataloader.batch_size=1', 'dataloader.pin_memory=false',
                 'dataloader.num_workers=0', 'dataloader.persistent_workers=false'])
             OmegaConf.resolve(cfg)

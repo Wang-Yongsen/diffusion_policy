@@ -3,7 +3,7 @@ flowchart TD
   subgraph data["A · 数据处理 〔bimanual-teleop项目；bimanual-teleop环境〕"]
     capture["1  示范采集<br/>Quest / 手套 → 双臂双手<br/>三路 RGB + 实测状态 + 已提交指令<br/>cli/teleop_quest_tianji.py<br/>recording/recorder.py + sink.py<br/>recording/camera.py + spool.py"]
     finalize["2  原始记录整理<br/>raw_spool → MP4 + raw.zarr<br/>检查视频、重建实测末端位姿<br/>recording/finalize.py<br/>recording/storage.py<br/>BT入口：scripts/finalize_recording.py"]
-    convert["3  对齐、修复与转换<br/>30 Hz；图像匹配 / 状态插值<br/>动作保持过去目标；无效点切段<br/>recording/convert.py<br/>configs/recording_conversion.yaml<br/>BT入口：scripts/convert_recording.py"]
+    convert["3  对齐、修复与转换<br/>10 Hz；图像匹配 / 状态插值<br/>动作保持过去目标；无效点切段<br/>recording/convert.py<br/>configs/recording_conversion.yaml<br/>BT入口：scripts/convert_recording.py"]
     zarr["输出：训练 zarr · 三路 RGB / 12维 EEF / 40维手关节 / 52维动作 / 边界及追溯"]
   end
   subgraph train["B · 数据接口与训练 〔DP；train.py + Task / Train YAML 组织调用〕"]

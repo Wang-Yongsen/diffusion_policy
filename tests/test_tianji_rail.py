@@ -99,6 +99,26 @@ class TianjiRailTests(unittest.TestCase):
         self.assertEqual(dataset.n_source_episodes, 2)
         self.assertEqual(dataset.train_mask[0], dataset.train_mask[1])
 
+    def test_sampling_frequency_checks_metadata_and_segment_timestamps(self):
+        # A new source/segment can restart its time axis; only adjacent values
+        # within a segment must be 100 ms apart.
+        times = np.r_[np.arange(20), np.arange(5), np.arange(20)] / 10
+        self.root['data'].array('timestamp', times)
+        self.root.attrs['target_fps'] = 10
+        dataset = make_dataset(self.path, sample_hz=10)
+        self.assertEqual(dataset.sample_hz, 10)
+        self.assertEqual(len(dataset), 10)
+        self.root.attrs['target_fps'] = 30
+        with self.assertRaisesRegex(ValueError, 'target_fps=30'):
+            make_dataset(self.path, sample_hz=10)
+        self.root.attrs['target_fps'] = 10
+        self.root['data/timestamp'][1] += .01
+        with self.assertRaisesRegex(ValueError, 'timestamp intervals'):
+            make_dataset(self.path, sample_hz=10)
+        del self.root.attrs['target_fps']
+        with self.assertRaisesRegex(ValueError, 'target_fps=None'):
+            make_dataset(self.path, sample_hz=10)
+
     def test_boundary_corruption_and_impossible_holdout_rejected(self):
         self.root['meta/segment_ends'][:] = [20, 24, 45]
         with self.assertRaisesRegex(ValueError, 'preserve'):

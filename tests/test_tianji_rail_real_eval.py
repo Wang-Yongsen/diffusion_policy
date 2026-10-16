@@ -26,6 +26,8 @@ from diffusion_policy.env_runner.tianji_rail_real_runner import TrialRecorder, T
 
 def config():
     result = load_deployment_config(PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
+    # Existing regression cases exercise historical 30 Hz queue boundaries.
+    result["policy_hz"], result["replanning_steps"] = 30, 2
     result["workspace"] = {side: {"min": [-1., -1., -1.], "max": [1., 1., 1.]} for side in ("left", "right")}
     return result
 
@@ -77,6 +79,82 @@ class FakeHand:
 
 
 class RealEvaluationTests(unittest.TestCase):
+    def test_10hz_observation_alignment_action_timing_and_expiry(self):
+        cfg = load_deployment_config(PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
+        self.assertEqual((cfg["policy_hz"], cfg["replanning_steps"]), (10, 1))
+        history = histories()
+        for key in ("camera_0", "camera_1", "camera_2"):
+            history[key] = [(1_000_000_000 + i * 33_333_333, np.zeros((16, 16, 3), np.uint8))
+                            for i in range(7)]
+        for kind in ("arms", "hands"):
+            for side in ("left", "right"):
+                size = 6 if kind == "arms" else 20
+                history[f"{kind}/{side}"] = [(t, np.zeros(size))
+                    for t in range(990_000_000, 1_220_000_001, 10_000_000)]
+        _, anchor, meta = align_observation(history, 2, cfg, now_ns=1_220_000_000)
+        self.assertEqual(meta["query_ns"], [anchor - 100_000_000, anchor])
+        actions, times, dropped = future_actions(np.zeros((8, 52)), anchor, anchor + 150_000_000, hz=10)
+        self.assertEqual((len(actions), dropped), (6, 2))
+        self.assertEqual(times.tolist(), [anchor + i * 100_000_000 for i in range(2, 8)])
+        with self.assertRaisesRegex(RuntimeError, "no future"):
+            future_actions(np.zeros((8, 52)), anchor, anchor + 690_000_000, hz=10)
+        cfg["workspace"] = config()["workspace"]
+        runtime = TianjiPolicyRuntime(FakeArm(), {side: FakeHand(side) for side in ("left", "right")},
+                                    cfg, lambda: None, lambda *args, **kwargs: None, clock_ns=lambda: anchor)
+        self.addCleanup(runtime.close)
+        runtime.seed(np.zeros(52), arm_ready=True)
+        runtime.submit(np.zeros((8, 52)), anchor)
+        runtime._target(anchor + 799_999_999)
+        with self.assertRaisesRegex(RuntimeError, "coverage expired"):
+            runtime._target(anchor + 800_000_000)
+
+    def test_checkpoint_frequency_mismatch_fails_before_inference_or_devices(self):
+        import eval_tianji_rail as entry
+        from omegaconf import OmegaConf
+        current = OmegaConf.create({"task": {"sample_hz": 10, "dataset": {"sample_hz": 10}}})
+        legacy = OmegaConf.create({"task": {"dataset": {}}})
+        self.assertEqual(entry.validate_policy_frequency(current, 10), 10)
+        self.assertEqual(entry.validate_policy_frequency(legacy, 30), 30)
+        with self.assertRaisesRegex(ValueError, "Checkpoint sample_hz=30"):
+            entry.validate_policy_frequency(legacy, 10)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            entry.validate_policy_frequency(current, 30)
+        current.task.dataset.sample_hz = 30
+        with self.assertRaisesRegex(ValueError, "dataset sample_hz"):
+            entry.validate_policy_frequency(current, 10)
+        with tempfile.TemporaryDirectory() as root, \
+             patch.object(entry, "load_policy", return_value=(None, legacy, "ema_model")), \
+             patch.object(entry, "check_inference") as infer, patch.object(entry, "TianjiRailEnv") as env:
+            with self.assertRaisesRegex(ValueError, "Checkpoint sample_hz=30"):
+                entry.main(["--checkpoint", "unused.ckpt", "--output", str(Path(root) / "session")])
+            infer.assert_not_called()
+            env.assert_not_called()
+
+    def test_10hz_replanning_waits_for_100ms_of_new_observations(self):
+        import torch
+        cfg = config()
+        cfg.update(policy_hz=10, replanning_steps=1)
+        anchors = iter([1_000_000_000, 1_033_333_333, 1_066_666_667, 1_100_000_000])
+        submitted = []
+        policy = SimpleNamespace(reset=lambda: None, last_timing={
+            "preprocessed_ns": 0, "inputs_ready_ns": 0},
+            predict_observation=lambda obs: {"action": torch.zeros(1, 8, 52)})
+        env = SimpleNamespace(config=cfg, motion=False, get_obs=lambda: ({}, next(anchors), {}),
+                              emit=lambda *args, **kwargs: None,
+                              runtime=SimpleNamespace(pause=lambda *args, **kwargs: None))
+        with tempfile.TemporaryDirectory() as root:
+            runner = TianjiRailRealRunner(env, policy, None, {}, Path(root) / "session")
+            def submit(actions, anchor):
+                submitted.append(anchor)
+                if len(submitted) == 2:
+                    runner._stop.set()
+                return 1
+            env.exec_actions = submit
+            runner._enabled.set()
+            runner._infer()
+            self.assertIsNone(runner.error)
+        self.assertEqual(submitted, [1_000_000_000, 1_100_000_000])
+
     def test_shadow_lifecycle_never_configures_enables_or_submits(self):
         module = "diffusion_policy.real_world.tianji_rail_env"
         with patch(f"{module}.TianjiKinematics") as kine_type, patch(f"{module}.TianjiDriver") as arm_type, \
