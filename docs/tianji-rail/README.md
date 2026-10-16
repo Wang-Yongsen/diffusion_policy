@@ -129,7 +129,7 @@ python eval_tianji_rail.py \
 
 该检查使用模拟图像，不能作为实时延迟或任务成功率。正式评估应使用正式训练完成后选定的模型。
 
-部署入口将 PyTorch 和 BLAS 的 CPU 计算线程限制为1，并在设备连接前启动、预热独立的模型推理进程，减少推理与设备控制、反馈解码及记录之间的线程竞争。`timing.json` 分别记录观测读取、预处理、输入传输和推理／输出回传耗时，事件中另存推理进程的传输与计算时刻。动作保持观测锚点的原计划时刻，过期动作不会平移后补发；8步、30 Hz时最后目标为观测后约233 ms，提交还需预留 `submit_margin_s`。
+部署入口将 PyTorch 和 BLAS 的 CPU 计算线程限制为1，并在设备连接前启动、预热独立的模型推理进程，减少推理与设备控制、反馈解码及记录之间的线程竞争。`timing.json` 分别记录观测读取、预处理、输入传输和推理／输出回传耗时，事件中另存推理进程的传输与计算时刻。默认异步模式下，动作保持观测锚点的原计划时刻，过期动作不会平移后补发；8步、30 Hz时最后目标为观测后约233 ms，提交还需预留 `submit_margin_s`。
 
 设备已连接、其他控制程序已退出时，省略 `--check-only` 进入影子模式，默认不配置控制参数、不使能或下发动作：
 
@@ -137,6 +137,19 @@ python eval_tianji_rail.py \
 python eval_tianji_rail.py \
   --checkpoint "$run_dir/checkpoints/latest.ckpt" \
   --output data/real_eval/shadow-001
+```
+
+推理模式由部署配置 `inference_mode` 决定，入口 `--inference-mode async|sync` 可覆盖，实际值记入 `session.json` 的 `deployment.inference_mode`：
+
+- `async`（默认）：推理与执行并行，新锚点至少前进 `replanning_steps/30` 秒才发起下一轮推理，新预测替换未来队列。
+- `sync`：每轮先等上一执行段执行完，再取锚点晚于完成时刻的新观测推理；推理期间机器人保持上一目标。返回的全部执行段（当前 `n_action_steps=8`，约267 ms）从提交时刻加 `submit_margin_s` 重新计时，全部执行，不丢弃步骤；`replanning_steps` 不生效。
+
+同步模式每轮都会停顿约"等待新帧＋推理耗时"，`timing.json` 的 `sync_hold_ms` 统计从执行段完成到预测返回的时间。试验总时长相应变长，必要时调大 `trial_timeout_s`。保持期间仍做设备和数据流健康检查，异常时中止。影子模式下检查同步调度：
+
+```bash
+python eval_tianji_rail.py \
+  --checkpoint "$run_dir/checkpoints/latest.ckpt" \
+  --inference-mode sync --output data/real_eval/shadow-sync-001
 ```
 
 [部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)引用项目内机械臂、手和相机配置（[设备约定](device-runtime.md)），并为时间阈值、速度、试验超时等参数提供注释。模型形状、RGB 预处理、EMA 和归一化器以 checkpoint 为准；首版支持 30 Hz、`n_latency_steps=0`、52 维绝对 EEF 动作。相机只采三路 RGB。

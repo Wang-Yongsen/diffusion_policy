@@ -53,6 +53,8 @@ def timing_report(path):
                     if start in item and end in item:
                         add(name, (item[end] - item[start]) / 1e6)
                 add("observation_age_at_processing_start_ms", (item["started_ns"] - item["anchor_ns"]) / 1e6)
+                if item.get("chunk_completed_ns") is not None:
+                    add("sync_hold_ms", (item["returned_ns"] - item["chunk_completed_ns"]) / 1e6)
             elif event == "submission":
                 control = item.get("side") or item["kind"]
                 add(f"{control}_submission_call_ms", (item["returned_ns"] - item["started_ns"]) / 1e6)
@@ -197,6 +199,7 @@ class TianjiRailRealRunner:
         import torch
         generation = -1
         anchor_previous = None
+        sync = self.env.config["inference_mode"] == "sync"
         try:
             while not self._stop.is_set():
                 if not self._enabled.wait(timeout=.05):
@@ -205,16 +208,33 @@ class TianjiRailRealRunner:
                 if generation != current:
                     self.policy.reset()
                     generation, anchor_previous = current, None
+                completed = None
+                if sync:
+                    completed = self.env.chunk_completed_ns()
+                    if completed is None:
+                        self._stop.wait(.002)
+                        continue
+                    # Full alignment competes with the arm loop for the GIL; skip it until a fresh anchor exists.
+                    latest = self.env.latest_anchor_ns()
+                    if latest is None or latest <= completed:
+                        self._stop.wait(.003)
+                        continue
                 started = time.monotonic_ns()
                 try:
                     obs, anchor, alignment = self.env.get_obs()
                 except ObservationNotReady as error:
+                    # In sync mode the runtime is holding here, so not-ready observations are retried.
                     if self.env.motion and self.env.runtime.active:
                         raise RuntimeError(str(error)) from error
                     self._stop.wait(.01)
                     continue
                 observed = time.monotonic_ns()
-                if anchor_previous is not None and anchor - anchor_previous < self.env.config["replanning_steps"] * 1e9 / 30:
+                if sync:
+                    # The observation must show the robot after the previous chunk, not during it.
+                    if anchor <= completed:
+                        self._stop.wait(.003)
+                        continue
+                elif anchor_previous is not None and anchor - anchor_previous < self.env.config["replanning_steps"] * 1e9 / 30:
                     self._stop.wait(.003)
                     continue
                 process_predict = getattr(self.policy, "predict_observation", None)
@@ -240,7 +260,7 @@ class TianjiRailRealRunner:
                     self.env.emit("prediction", anchor_ns=anchor, started_ns=started, returned_ns=returned,
                                   observed_ns=observed, preprocessed_ns=preprocessed,
                                   inputs_ready_ns=inputs_ready, process_timing=process_timing,
-                                  actions=actions, alignment=alignment)
+                                  actions=actions, alignment=alignment, chunk_completed_ns=completed)
                     dropped = self.env.exec_actions(actions, anchor)
                     self.env.emit("prediction_coverage", dropped_steps=dropped,
                                   remaining_steps=len(actions) - dropped)

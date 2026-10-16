@@ -11,11 +11,12 @@ from unittest.mock import patch
 
 import numpy as np
 from scipy.spatial.transform import Rotation
+import yaml
 
 from diffusion_policy.third_party.bimanual_teleop.types import JointTarget, Submission
 from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import JOINT_NAMES
 from diffusion_policy.real_world.tianji_policy_runtime import (
-    TianjiPolicyRuntime, future_actions, split_action, validate_actions,
+    HOLD_TTL_NS, TianjiPolicyRuntime, future_actions, split_action, validate_actions,
 )
 from diffusion_policy.real_world.tianji_rail_env import (
     PROJECT_ROOT, TianjiRailEnv, ObservationNotReady, align_observation, interpolate_state,
@@ -28,6 +29,12 @@ def config():
     result = load_deployment_config(PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
     result["workspace"] = {side: {"min": [-1., -1., -1.], "max": [1., 1., 1.]} for side in ("left", "right")}
     return result
+
+
+def checkpoint_cfg():
+    shape_meta = {"obs": {key: {"shape": [3, 16, 16], "type": "rgb"} for key in ("camera_0", "camera_1", "camera_2")}}
+    shape_meta["obs"].update(robot_eef_pose={"shape": [12]}, hand_joint={"shape": [40]})
+    return SimpleNamespace(task=SimpleNamespace(shape_meta=shape_meta, dataset={"resize_enabled": False}))
 
 
 def histories():
@@ -108,12 +115,43 @@ class RealEvaluationTests(unittest.TestCase):
                 TianjiRailEnv(config(), 2)
             arm_type.assert_not_called()
 
-    def runtime(self):
+    def test_unknown_inference_mode_is_rejected(self):
+        path = PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml"
+        values = yaml.safe_load(path.read_text())
+        values["inference_mode"] = "batch"
+        with tempfile.TemporaryDirectory() as root:
+            bad = Path(root) / "deployment.yaml"
+            bad.write_text(yaml.safe_dump(values))
+            with self.assertRaisesRegex(ValueError, "inference_mode"):
+                load_deployment_config(bad)
+
+    def test_sync_shadow_schedules_whole_chunk_until_simulated_completion(self):
+        module = "diffusion_policy.real_world.tianji_rail_env"
+        cfg = config()
+        cfg["inference_mode"] = "sync"
+        with patch(f"{module}.TianjiKinematics") as kine_type, patch(f"{module}.TianjiDriver"), \
+             patch(f"{module}.WujiSdkSession"), patch(f"{module}.WujiHandDriver"), patch(f"{module}.CameraRig"):
+            kine_type.return_value.model.digest = cfg["expected_model_sha256"]
+            env = TianjiRailEnv(cfg, 2)
+        events = []
+        env.recorder = SimpleNamespace(event=lambda event, **values: events.append((event, values)))
+        # An anchor this old has no future coverage in async mode.
+        self.assertEqual(env.exec_actions(np.zeros((8, 52)), 0), 0)
+        times = events[-1][1]["times_ns"]
+        self.assertEqual(len(times), 8)
+        self.assertIsNone(env.chunk_completed_ns())
+        end = int(times[-1]) + round(1e9 / 30)
+        with patch(f"{module}.time.monotonic_ns", return_value=end):
+            self.assertEqual(env.chunk_completed_ns(), end)
+
+    def runtime(self, inference_mode="async"):
         self.now = 1_000_000_000
         self.events = []
         arm = FakeArm()
         hands = {side: FakeHand(side) for side in ("left", "right")}
-        runtime = TianjiPolicyRuntime(arm, hands, config(), lambda: None,
+        cfg = config()
+        cfg["inference_mode"] = inference_mode
+        runtime = TianjiPolicyRuntime(arm, hands, cfg, lambda: None,
                                     lambda event, **values: self.events.append((event, values)), clock_ns=lambda: self.now)
         runtime.seed(np.zeros(52), arm_ready=True)
         self.addCleanup(runtime.close)
@@ -171,6 +209,11 @@ class RealEvaluationTests(unittest.TestCase):
         self.assertEqual(report["preprocess_inference_transfer_ms"]["count"], 2)
         self.assertEqual(report["preprocess_inference_transfer_ms"]["median"], 70)
         self.assertEqual(report["observation_age_at_processing_start_ms"]["median"], 20)
+        self.assertNotIn("sync_hold_ms", report)
+        with tempfile.TemporaryDirectory() as root:
+            sync = {**prediction, "chunk_completed_ns": 960_000_000}
+            Path(root, "events.jsonl").write_text(json.dumps(sync) + "\n")
+            self.assertEqual(timing_report(root)["sync_hold_ms"]["median"], 110)
 
     def test_action_sides_frames_units_and_joint_names(self):
         action = np.zeros(52)
@@ -240,6 +283,62 @@ class RealEvaluationTests(unittest.TestCase):
         previous = runtime.hands["left"].last_target
         runtime.tick("hand")
         self.assertEqual(runtime.hands["left"].last_target, previous)
+
+    def test_sync_runtime_retimes_whole_chunk_and_holds_after_completion(self):
+        runtime = self.runtime("sync")
+        self.assertTrue(runtime.sync_waiting)
+        self.assertEqual(runtime.chunk_completed_ns, self.now)
+        actions = np.zeros((8, 52))
+        actions[:, 0] = np.arange(8) * .001
+        self.assertEqual(runtime.submit(actions, self.now - 300_000_000), 0)
+        times = self.events[-1][1]["times_ns"]
+        self.assertEqual(int(times[0]), self.now + 10_000_000)
+        self.assertFalse(runtime.sync_waiting)
+        self.assertIsNone(runtime.chunk_completed_ns)
+        with self.assertRaisesRegex(RuntimeError, "still executing"):
+            runtime.submit(actions, self.now)
+        self.now = int(times[-1])
+        runtime.tick("arm")
+        self.assertAlmostEqual(runtime.arm.commands[-1].tool_poses["left"].position_m[0], .007)
+        self.now += round(1e9 / 30)
+        runtime.tick("arm")
+        self.assertFalse(runtime.active)
+        self.assertIsNone(runtime.fault)
+        self.assertTrue(runtime.sync_waiting)
+        self.assertEqual(runtime.chunk_completed_ns, self.now)
+        self.assertIn("chunk_complete", [event for event, _ in self.events])
+        count = len(runtime.arm.commands)
+        self.now += 300_000_000
+        runtime.tick("arm")
+        self.assertEqual(len(runtime.arm.commands), count + 1)
+        self.assertAlmostEqual(runtime.arm.commands[-1].tool_poses["left"].position_m[0], .007)
+        runtime.hands["left"].enabled = False
+        with self.assertRaisesRegex(RuntimeError, "engagement was lost"):
+            runtime.tick("hand", "left")
+        runtime.health = lambda: "camera_0: missing/stale history"
+        with self.assertRaisesRegex(RuntimeError, "stale"):
+            runtime.tick("arm")
+
+    def test_sync_targets_outlive_chunk_coverage_by_hold_ttl(self):
+        for mode in ("sync", "async"):
+            runtime = self.runtime(mode)
+            runtime.submit(np.zeros((8, 52)), self.now)
+            times = self.events[-1][1]["times_ns"]
+            coverage_end = int(times[-1]) + round(1e9 / 30)
+            self.now = int(times[0])
+            runtime.tick("arm")
+            self.assertEqual(runtime.arm.commands[-1].expires_monotonic_ns, coverage_end)
+            # Late steps leave less than one hold TTL before coverage ends; arm IK may take longer.
+            for now in (int(times[-2]) + 1_000_000, coverage_end - 1_000_000):
+                self.now = now
+                runtime.tick("arm")
+                expected = now + HOLD_TTL_NS if mode == "sync" else coverage_end
+                self.assertEqual(runtime.arm.commands[-1].expires_monotonic_ns, expected, mode)
+            if mode == "sync":
+                self.now = coverage_end + 1
+                runtime.tick("arm")
+                self.assertTrue(runtime.sync_waiting)
+                self.assertEqual(runtime.arm.commands[-1].expires_monotonic_ns, self.now + HOLD_TTL_NS)
 
     def test_partial_hand_rejection_stops_all_groups(self):
         runtime = self.runtime()
@@ -330,9 +429,7 @@ class RealEvaluationTests(unittest.TestCase):
             release.wait(2)
             return {"action": torch.zeros(1, 8, 52)}
         policy = SimpleNamespace(device=torch.device("cpu"), reset=lambda: None, predict_action=predict)
-        shape_meta = {"obs": {key: {"shape": [3, 16, 16], "type": "rgb"} for key in ("camera_0", "camera_1", "camera_2")}}
-        shape_meta["obs"].update(robot_eef_pose={"shape": [12]}, hand_joint={"shape": [40]})
-        cfg = SimpleNamespace(task=SimpleNamespace(shape_meta=shape_meta, dataset={"resize_enabled": False}))
+        cfg = checkpoint_cfg()
         env = SimpleNamespace(config=config(), motion=False, recorder=None,
             get_obs=lambda: (obs, anchor, alignment), pause=lambda reason: None,
             emit=lambda *args, **kwargs: None, exec_actions=lambda *args: submitted.append(args),
@@ -351,6 +448,61 @@ class RealEvaluationTests(unittest.TestCase):
                 worker.join(timeout=2)
             self.assertFalse(worker.is_alive())
             self.assertEqual(submitted, [])
+
+    @unittest.skipUnless(importlib.util.find_spec("torch"), "requires unified model environment")
+    def test_sync_runner_infers_only_after_completion_with_later_anchor(self):
+        import torch
+        obs, anchor, alignment = align_observation(histories(), 2, config(), now_ns=1_050_000_000)
+        completions = iter([None, anchor, anchor - 1])
+        predicted, submitted, emitted, reads = [], [], [], []
+        def read():
+            reads.append(anchor)
+            return obs, anchor, alignment
+        def predict(_):
+            predicted.append(anchor)
+            return {"action": torch.zeros(1, 8, 52)}
+        def execute(actions, anchor_ns):
+            submitted.append(len(actions))
+            runner._stop.set()
+            return 0
+        policy = SimpleNamespace(device=torch.device("cpu"), reset=lambda: None, predict_action=predict)
+        cfg = config()
+        cfg["inference_mode"] = "sync"
+        env = SimpleNamespace(config=cfg, motion=False, recorder=None,
+            chunk_completed_ns=lambda: next(completions), latest_anchor_ns=lambda: anchor, get_obs=read,
+            pause=lambda reason: None, emit=lambda event, **values: emitted.append((event, values)),
+            exec_actions=execute, runtime=SimpleNamespace(active=False, pause=lambda *args, **kwargs: None))
+        with tempfile.TemporaryDirectory() as root:
+            runner = TianjiRailRealRunner(env, policy, checkpoint_cfg(), {}, Path(root) / "session")
+            runner._begin()
+            worker = threading.Thread(target=runner._infer)
+            worker.start()
+            worker.join(timeout=2)
+            runner._stop.set()
+            worker.join(timeout=2)
+            runner._end("shadow", "test complete")
+        self.assertFalse(worker.is_alive())
+        self.assertIsNone(runner.error)
+        self.assertEqual((predicted, submitted), ([anchor], [8]))
+        # The stale anchor is rejected by the preview, not by a full observation read.
+        self.assertEqual(reads, [anchor])
+        prediction = next(values for event, values in emitted if event == "prediction")
+        self.assertEqual(prediction["chunk_completed_ns"], anchor - 1)
+
+    def test_latest_anchor_matches_aligned_anchor(self):
+        module = "diffusion_policy.real_world.tianji_rail_env"
+        with patch(f"{module}.TianjiKinematics") as kine_type, patch(f"{module}.TianjiDriver"), \
+             patch(f"{module}.WujiSdkSession"), patch(f"{module}.WujiHandDriver"), patch(f"{module}.CameraRig"):
+            kine_type.return_value.model.digest = config()["expected_model_sha256"]
+            env = TianjiRailEnv(config(), 2)
+        self.assertIsNone(env.latest_anchor_ns())
+        for key, history in histories().items():
+            env.histories[key].extend(history)
+        _, anchor, _ = align_observation(histories(), 2, config(), now_ns=1_050_000_000)
+        self.assertEqual(env.latest_anchor_ns(), anchor)
+        # A frame newer than every measured state cannot be the anchor yet.
+        env.histories["camera_0"].append((1_060_000_000, np.zeros((16, 16, 3), np.uint8)))
+        self.assertEqual(env.latest_anchor_ns(), anchor)
 
 
 if __name__ == "__main__":

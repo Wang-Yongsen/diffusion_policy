@@ -1,0 +1,59 @@
+# 宽松限制版部署配置：除跳变和速度上限外，其余与 tianji_rail_real_eval.yaml 相同；入口用 --config 指定。
+# 数值与 2026-10-15 的 motion-loose 试验一致；第一步可能明显跳离接合姿态，现场须随时准备 p 接管。
+# 路径相对项目根目录；设备配置与源码均在本项目，移动后不依赖相邻仓库。
+arm_config: diffusion_policy/config/tianji_teleop.yaml
+hand_config: diffusion_policy/config/wuji_teleop.yaml
+camera_config: diffusion_policy/config/recording.yaml
+# 当前训练来源的 FK 模型摘要；更换运动学模型须重核数据坐标与此摘要。
+expected_model_sha256: ce20b1a80974c3ed58cdac4973152625096c8ad93a779e5fd4108c26ce19bd52
+# 默认只读设备；实际下发还必须使用入口的 --motion 并手动开始每次试验。
+device: cuda:0
+# 已有数据按 30 Hz 转换；更改频率需要核对训练标签，首版仅允许 30。
+policy_hz: 30
+# 双臂复用 200 Hz 伺服，双手 120 Hz；推理不占用控制线程。
+arm_hz: 200
+hand_hz: 120
+# FK 和状态历史采样频率，不等同于设备原始反馈频率。
+state_hz: 100
+# 历史长度（秒），须覆盖 checkpoint 的观测窗口。
+history_s: 2.0
+# 推理模式；入口 --inference-mode 可覆盖。
+# async：推理与执行并行，动作保持观测锚点的计划时刻，过期步骤丢弃。
+# sync：推理期间保持上一目标；返回的 n_action_steps 步从提交时刻重新计时并全部执行，执行完再取新观测。
+inference_mode: async
+# 仅 async：两次重规划的最短间隔为 replanning_steps / policy_hz 秒。
+replanning_steps: 2
+# 下发前保留的时间裕量（秒）；过期动作直接丢弃。
+submit_margin_s: 0.01
+# 图像年龄、低维反馈年龄、相邻状态插值间隔上限（秒）。
+max_camera_age_s: 0.15
+max_state_age_s: 0.08
+max_state_gap_s: 0.05
+# 每路图像距查询时刻的偏差，以及三路图像跨度上限（秒）。
+max_image_skew_s: 0.04
+max_camera_span_s: 0.05
+# 策略动作与开始姿态/上一目标的最大跳变：米、弧度、弧度（主配置为 0.04 / 0.3 / 0.3）。
+max_position_jump_m: 0.1
+max_rotation_jump_rad: 0.45
+max_hand_jump_rad: 1.2
+# 相邻 30 Hz 策略目标的速度上限；双臂还有原执行器的关节约束（主配置为 0.15 / 0.8 / 2.0）。
+# max_hand_speed_rad_s 同时是运行时每个控制周期给手限速的上限，放宽后手指实际动得更快。
+max_position_speed_m_s: 1.2
+max_rotation_speed_rad_s: 4.0
+max_hand_speed_rad_s: 8.0
+# 按当前需求将两臂各自基座系下的法兰 XYZ 范围放宽至每轴 ±1000 米，近似不限制位置。
+# 速度、动作跳变及关节限制仍生效；null 会拒绝运动。
+# 示例格式：left: {min: [x,y,z], max: [x,y,z]}；不能当作碰撞检测。
+workspace:
+  left:
+    min: [-1000.0, -1000.0, -1000.0]
+    max: [1000.0, 1000.0, 1000.0]
+  right:
+    min: [-1000.0, -1000.0, -1000.0]
+    max: [1000.0, 1000.0, 1000.0]
+# 每次试验超时（秒）；启动不会自动回位或张手。
+trial_timeout_s: 30.0
+# 新建评估目录，已有目录拒绝覆盖；每次试验只记录预测、调度、下发计时、暂停和结果，不保存视频。
+output_dir: data/real_eval
+# 异步事件日志队列容量；满时丢弃新事件并在 trial.json 的 dropped_events 计数，不中止试验。
+record_queue_capacity: 4096
