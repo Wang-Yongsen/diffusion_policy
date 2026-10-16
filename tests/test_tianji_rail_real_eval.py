@@ -1,4 +1,4 @@
-"""Timing, real-contract alignment, stop races and bounded recording, without hardware."""
+"""Timing, real-contract alignment, stop races and bounded event logging, without hardware."""
 
 import json
 import importlib.util
@@ -21,7 +21,7 @@ from diffusion_policy.real_world.tianji_rail_env import (
     PROJECT_ROOT, TianjiRailEnv, ObservationNotReady, align_observation, interpolate_state,
     load_deployment_config, preprocess_observation,
 )
-from diffusion_policy.env_runner.tianji_rail_real_runner import TrialRecorder, TianjiRailRealRunner, summarize_trials
+from diffusion_policy.env_runner.tianji_rail_real_runner import TrialRecorder, TianjiRailRealRunner, summarize_trials, timing_report
 
 
 def config():
@@ -94,6 +94,7 @@ class RealEvaluationTests(unittest.TestCase):
             finally:
                 env.close()
             for device in (arm_type.return_value, hand_type.return_value):
+                device.start.assert_called_with()
                 device.configure.assert_not_called()
                 device.engage.assert_not_called()
                 device.submit.assert_not_called()
@@ -126,6 +127,50 @@ class RealEvaluationTests(unittest.TestCase):
         self.assertEqual(len(selected), 5)
         with self.assertRaisesRegex(RuntimeError, "no future"):
             future_actions(actions, 1_000_000_000, 1_300_000_000)
+
+    def test_expiry_keeps_submission_margin_and_reports_observation_age(self):
+        actions = np.zeros((8, 52))
+        selected, stamps, dropped = future_actions(actions, 1_000_000_000, 1_223_333_332)
+        self.assertEqual((len(selected), dropped), (1, 7))
+        self.assertEqual(int(stamps[0]), 1_233_333_333)
+        with self.assertRaisesRegex(RuntimeError, r"observation age=223.3 ms.*submit margin=10.0 ms"):
+            future_actions(actions, 1_000_000_000, 1_223_333_333)
+
+    def test_deployment_limits_blas_threads_before_loading_model(self):
+        import eval_tianji_rail as entry
+        from threadpoolctl import threadpool_info
+        def blas_threads():
+            return {pool["filepath"]: pool["num_threads"] for pool in threadpool_info()
+                    if pool["user_api"] == "blas"}
+        previous = blas_threads()
+        self.assertTrue(previous)
+        def load(*args, **kwargs):
+            self.assertTrue(all(count == 1 for count in blas_threads().values()))
+            raise RuntimeError("offline model boundary")
+        with tempfile.TemporaryDirectory() as root, patch.object(entry, "load_policy", side_effect=load), \
+             patch.object(entry, "TianjiRailEnv") as env:
+            with self.assertRaisesRegex(RuntimeError, "offline model boundary"):
+                entry.main(["--checkpoint", "unused.ckpt", "--output", str(Path(root) / "session")])
+            env.assert_not_called()
+        self.assertEqual(blas_threads(), previous)
+
+    def test_stage_timing_report_accepts_new_and_legacy_prediction_events(self):
+        prediction = {"event": "prediction", "anchor_ns": 980_000_000,
+                      "started_ns": 1_000_000_000, "observed_ns": 1_001_000_000,
+                      "preprocessed_ns": 1_003_000_000, "inputs_ready_ns": 1_006_000_000,
+                      "returned_ns": 1_070_000_000}
+        legacy = {key: value for key, value in prediction.items()
+                  if key not in ("observed_ns", "preprocessed_ns", "inputs_ready_ns")}
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "events.jsonl").write_text("\n".join(json.dumps(item) for item in (prediction, legacy)) + "\n")
+            report = timing_report(root)
+        for name, expected in (("observation_read_ms", 1), ("preprocess_ms", 2),
+                               ("input_transfer_ms", 3), ("inference_output_transfer_ms", 64)):
+            self.assertEqual(report[name]["count"], 1)
+            self.assertEqual(report[name]["median"], expected)
+        self.assertEqual(report["preprocess_inference_transfer_ms"]["count"], 2)
+        self.assertEqual(report["preprocess_inference_transfer_ms"]["median"], 70)
+        self.assertEqual(report["observation_age_at_processing_start_ms"]["median"], 20)
 
     def test_action_sides_frames_units_and_joint_names(self):
         action = np.zeros(52)
@@ -221,36 +266,58 @@ class RealEvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "measured workspace"):
             validate_actions(np.zeros((2, 52)), stamps, np.zeros(52), cfg)
 
-    def test_recording_actual_rgb_videos_and_fixed_motion_denominator(self):
-        import av
-        from diffusion_policy.third_party.bimanual_teleop.recording.sink import Record
+    def test_event_log_without_videos_and_fixed_motion_denominator(self):
         with tempfile.TemporaryDirectory() as root:
             recorder = TrialRecorder(Path(root) / "trial_0001", {"mode": "motion"})
-            for i in range(3):
-                for frame in range(4):
-                    image = np.full((16, 16, 3), 40 + frame, np.uint8)
-                    recorder.camera(f"camera_{i}", image, Record(f"camera_{i}", frame * 33_333_333, frame, {}))
+            recorder.event("submission", kind="arm", side=None, mode="policy", planned_ns=1_000_000_000,
+                           started_ns=1_001_000_000, returned_ns=1_003_000_000)
             result = recorder.close("success")
             self.assertIsNone(result["reason"])
-            for i in range(3):
-                with av.open(str(Path(root) / f"trial_0001/camera_{i}.mp4")) as video:
-                    self.assertEqual(len(list(video.decode(video=0))), 4)
+            self.assertEqual(result["dropped_events"], 0)
+            trial = Path(root) / "trial_0001"
+            self.assertEqual(sorted(path.name for path in trial.iterdir()), ["events.jsonl", "timing.json", "trial.json"])
+            timing = json.loads((trial / "timing.json").read_text())
+            self.assertEqual(timing["arm_submission_call_ms"]["median"], 2)
+            self.assertEqual(timing["arm_target_age_at_submission_ms"]["median"], 1)
             aborted = TrialRecorder(Path(root) / "trial_0002", {"mode": "motion"})
             aborted.close("device_abort", "fake disconnect")
             shadow = TrialRecorder(Path(root) / "trial_0003", {"mode": "shadow"})
-            shadow.close("shadow")
+            self.assertEqual(shadow.close("shadow")["outcome"], "device_abort")
             report = summarize_trials(root)
             self.assertEqual(report["motion_trials"], 2)
             self.assertEqual(report["success_rate"], .5)
 
-    def test_video_writer_failure_is_not_reported_as_success(self):
-        from diffusion_policy.third_party.bimanual_teleop.recording.sink import Record
-        with tempfile.TemporaryDirectory() as root, patch("av.open", side_effect=OSError("disk failure")):
-            recorder = TrialRecorder(Path(root) / "trial", {"mode": "motion"})
-            recorder.camera("camera_0", np.zeros((16, 16, 3), np.uint8), Record("camera_0", 0, 0, {}))
+    def test_full_event_queue_drops_and_counts_without_raising(self):
+        real_dumps, entered, release = json.dumps, threading.Event(), threading.Event()
+        def blocking_dumps(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            return real_dumps(*args, **kwargs)
+        with tempfile.TemporaryDirectory() as root:
+            recorder = TrialRecorder(Path(root) / "trial", {"mode": "motion"}, capacity=1)
+            with patch("json.dumps", blocking_dumps):
+                recorder.event("pause", reason="writing")
+                self.assertTrue(entered.wait(1))
+                recorder.event("pause", reason="queued")
+                recorder.event("pause", reason="dropped")
+                release.set()
             result = recorder.close("success")
-            self.assertEqual(result["outcome"], "device_abort")
-            self.assertIn("disk failure", result["reason"])
+            lines = (Path(root) / "trial/events.jsonl").read_text().splitlines()
+        self.assertEqual((result["outcome"], result["dropped_events"], result["record_error"]), ("success", 1, None))
+        self.assertEqual([json.loads(line)["reason"] for line in lines], ["writing", "queued"])
+
+    def test_event_writer_failure_keeps_operator_outcome(self):
+        def failing_dumps(*args, **kwargs):
+            raise OSError("disk failure")
+        with tempfile.TemporaryDirectory() as root:
+            recorder = TrialRecorder(Path(root) / "trial", {"mode": "motion"})
+            with patch("json.dumps", failing_dumps):
+                recorder.event("pause", reason="operator")
+                recorder._thread.join(1)
+            recorder.event("pause", reason="after writer failure")
+            result = recorder.close("success")
+        self.assertEqual((result["status"], result["outcome"], result["dropped_events"]), ("complete", "success", 1))
+        self.assertIn("disk failure", result["record_error"])
 
     @unittest.skipUnless(importlib.util.find_spec("torch"), "requires unified model environment")
     def test_stop_during_inference_discards_inflight_prediction(self):

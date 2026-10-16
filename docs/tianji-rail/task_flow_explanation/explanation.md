@@ -134,7 +134,7 @@ U-Net 对应 [conditional_unet1d.py](../../../diffusion_policy/model/diffusion/c
 | Runtime | 保留动作名义时刻、筛掉过期动作、更新未来目标队列；检查空间、跳变、速度；独立控制线程与暂停 | [tianji_policy_runtime.py](../../../diffusion_policy/real_world/tianji_policy_runtime.py#L68) |
 | 机械臂执行与运动学 | 把绝对 EEF 目标转换为受约束的关节伺服命令；由实际关节求 FK，提供 IK | [cartesian.py](../../../third_party/bimanual_teleop/control/arm/cartesian.py)、[servo.py](../../../third_party/bimanual_teleop/control/arm/servo.py)、[model.py](../../../third_party/bimanual_teleop/devices/tianji/model.py#L228) |
 | 设备驱动 | 机械臂 SDK 请求与反馈；无极手目标提交、反馈与健康检查 | [tianji/driver.py](../../../third_party/bimanual_teleop/devices/tianji/driver.py)、[tianji/sdk.py](../../../third_party/bimanual_teleop/devices/tianji/sdk.py)、[wuji/adapter.py](../../../third_party/bimanual_teleop/devices/wuji/adapter.py) |
-| TrialRecorder | 异步记录视频、观测、预测、调度和 SDK 提交事件；生成逐试验报告与会话汇总 | [TrialRecorder](../../../diffusion_policy/env_runner/tianji_rail_real_runner.py#L69)、[summarize_trials](../../../diffusion_policy/env_runner/tianji_rail_real_runner.py#L163) |
+| TrialRecorder | 异步记录预测、调度、下发计时和暂停事件，不保存视频；生成逐试验报告与会话汇总 | [TrialRecorder](../../../diffusion_policy/env_runner/tianji_rail_real_runner.py#L73)、[summarize_trials](../../../diffusion_policy/env_runner/tianji_rail_real_runner.py#L135) |
 | 模型运行环境 | 在 `tianji-rail-diffusion-policy` 中运行训练与评估；真机设备接口使用本项目快照 | [conda_environment_tianji.yaml](../../../conda_environment_tianji.yaml) |
 
 真机观测选择低维历史已经覆盖的主相机时刻 `t0`，向前查询两步 30 Hz 历史。图像取最近帧；末端位置、手关节线性插值，末端旋转用 SLERP。同时检查数据年龄、逐路图像偏差、三路图像跨度和状态插值缺口；不能以零值或端点外推补齐缺失状态。图像处理和归一化以 checkpoint 为准。

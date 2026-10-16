@@ -32,7 +32,10 @@ def future_actions(actions, anchor_ns, now_ns, hz=30, margin_s=.01):
     stamps = int(anchor_ns) + np.rint(np.arange(len(actions)) * 1e9 / hz).astype(np.int64)
     keep = stamps > now_ns + round(margin_s * 1e9)
     if not keep.any():
-        raise RuntimeError("Prediction has no future action coverage")
+        raise RuntimeError("Prediction has no future action coverage "
+            f"(observation age={(now_ns - anchor_ns) / 1e6:.1f} ms, "
+            f"last action offset={(stamps[-1] - anchor_ns) / 1e6:.1f} ms, "
+            f"submit margin={margin_s * 1000:.1f} ms)")
     return actions[keep].copy(), stamps[keep], int((~keep).sum())
 
 
@@ -137,10 +140,7 @@ class TianjiPolicyRuntime:
         with self._lock:
             if errors:
                 self.fault = self.fault or "; ".join(errors)
-        try:
-            self.emit("pause", reason=str(reason), fault=fault)
-        except Exception as error:
-            self.fault = self.fault or str(error)
+        self.emit("pause", reason=str(reason), fault=fault)
 
     def _target(self, now):
         if now >= self._times[-1] + round(1e9 / self.config["policy_hz"]):
@@ -208,10 +208,8 @@ class TianjiPolicyRuntime:
                         return
                 receipts = {side: hand.submit(DeviceCommand(hand.device_id, command_id,
                     target, (), now, expiry, hand.profile.profile_id))}
-            self.emit("submission", kind=kind, side=side, command_id=command_id, planned_ns=nominal,
-                      started_ns=now, returned_ns=self.clock_ns(), receipts=receipts,
-                      mode="policy" if active else "hold", requested_action=action,
-                      submitted_targets=poses if kind == "arm" else {side: hand.last_target})
+            self.emit("submission", kind=kind, side=side, mode="policy" if active else "hold",
+                      planned_ns=nominal, started_ns=now, returned_ns=self.clock_ns())
             if any(not r.accepted for r in receipts.values()):
                 raise RuntimeError(f"Partial/rejected {kind} submission: {receipts}")
 
@@ -225,7 +223,6 @@ class TianjiPolicyRuntime:
                 try:
                     self.pause(error, fault=True)
                 except Exception:
-                    # A failed recorder must not prevent the driver stop request above.
                     pass
             deadline += period
             if deadline < time.monotonic():

@@ -4,6 +4,8 @@ if [ -r "$HOME/.bashrc" ]; then
 fi
 if command -v conda >/dev/null 2>&1; then
     source "$(conda info --base)/etc/profile.d/conda.sh"
+elif [ -r "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/anaconda3/etc/profile.d/conda.sh"
 else
     source /opt/miniconda3/etc/profile.d/conda.sh
 fi

@@ -1,5 +1,6 @@
 name: tianji-rail-diffusion-policy
-# 在项目根目录执行 conda env create -f conda_environment_tianji.yaml。
+# 在项目根目录执行 PYTHONNOUSERSITE=1 PIP_USER=false conda env create -f conda_environment_tianji.yaml。
+# 创建阶段也需禁用用户级包，避免 pip 误用 ~/.local 中的依赖。
 # 环境按 name 创建到 Conda 默认目录；真机评估需要的设备代码和 SDK 随 third_party 保存。
 # 仅覆盖天机训练和评估；采集、整理及转换使用 bimanual-teleop 项目的环境。
 channels:

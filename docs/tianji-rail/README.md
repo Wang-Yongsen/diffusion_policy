@@ -7,13 +7,15 @@
 在 `diffusion_policy` 项目根目录操作。训练和评估使用 `tianji-rail-diffusion-policy` 环境：
 
 ```bash
-conda env create -f conda_environment_tianji.yaml  # 仅首次创建
+PYTHONNOUSERSITE=1 PIP_USER=false conda env create -f conda_environment_tianji.yaml  # 仅首次创建
 conda activate tianji-rail-diffusion-policy
 ```
 
-已有环境无需重复创建。环境名由 YAML 的 `name: tianji-rail-diffusion-policy` 指定，本机路径为 `/opt/miniconda3/envs/tianji-rail-diffusion-policy`。该环境固定NumPy 1.26.4，与pandas 1.5.3兼容；原 `tianji-rail` 环境不作为本项目的默认环境。bimanual-teleop 的数据处理使用其自己的 `bimanual-teleop` 环境。
+已有环境无需重复创建。环境名由 YAML 的 `name: tianji-rail-diffusion-policy` 指定，本机路径为 `/home/yuchen/anaconda3/envs/tianji-rail-diffusion-policy`。该环境固定NumPy 1.26.4，与pandas 1.5.3兼容；原 `tianji-rail` 环境不作为本项目的默认环境。bimanual-teleop 的数据处理使用其自己的 `bimanual-teleop` 环境。
 
-用 VS Code／Cursor 打开本项目根目录时，[项目设置](../../.vscode/settings.json)将默认Python解释器指向该训练环境；新建终端通过[项目 Bash 配置](../../.vscode/bashrc)自动激活。已打开的终端需手动执行上面的激活命令；编辑器若记住旧解释器，执行 `Python: Select Interpreter`，选择 `/opt/miniconda3/envs/tianji-rail-diffusion-policy/bin/python`。换机器时按实际Conda位置调整解释器设置。
+创建命令中的 `PYTHONNOUSERSITE=1 PIP_USER=false` 用于安装阶段隔离 `~/.local` 中的包；YAML 的 `variables` 会在后续激活环境时继续应用。
+
+用 VS Code／Cursor 打开本项目根目录时，[项目设置](../../.vscode/settings.json)将默认Python解释器指向该训练环境；新建终端通过[项目 Bash 配置](../../.vscode/bashrc)自动激活。已打开的终端需手动执行上面的激活命令；编辑器若记住旧解释器，执行 `Python: Select Interpreter`，选择 `/home/yuchen/anaconda3/envs/tianji-rail-diffusion-policy/bin/python`。换机器时按实际Conda位置调整解释器设置。
 
 真机评估需要的设备接口、实时相机读取和SDK采用本项目 `third_party` 的本地快照，来源见[本地依赖](../../third_party/README.md)。只有本项目自身以editable安装；移动源码后执行 `python -m pip install --no-deps -e .` 更新位置。
 
@@ -23,7 +25,7 @@ conda activate tianji-rail-diffusion-policy
 python -c "import sys; print(sys.executable)"
 ```
 
-本机应输出 `/opt/miniconda3/envs/tianji-rail-diffusion-policy/bin/python`。
+本机应输出 `/home/yuchen/anaconda3/envs/tianji-rail-diffusion-policy/bin/python`。
 
 ## 2．读取训练数据
 
@@ -127,6 +129,8 @@ python eval_tianji_rail.py \
 
 该检查使用模拟图像，不能作为实时延迟或任务成功率。正式评估应使用正式训练完成后选定的模型。
 
+部署入口将 PyTorch 和 BLAS 的 CPU 计算线程限制为1，并在设备连接前启动、预热独立的模型推理进程，减少推理与设备控制、反馈解码及记录之间的线程竞争。`timing.json` 分别记录观测读取、预处理、输入传输和推理／输出回传耗时，事件中另存推理进程的传输与计算时刻。动作保持观测锚点的原计划时刻，过期动作不会平移后补发；8步、30 Hz时最后目标为观测后约233 ms，提交还需预留 `submit_margin_s`。
+
 设备已连接、其他控制程序已退出时，省略 `--check-only` 进入影子模式，默认不配置控制参数、不使能或下发动作：
 
 ```bash
@@ -141,6 +145,6 @@ python eval_tianji_rail.py \
 
 暂停清空未来目标，双臂请求停止，健康手继续发送最后已接受的目标；退出会关闭驱动并禁用手。退出前应由操作员处理好抓持物。模型推理或观测故障中止后，按提示重新启动入口；程序不会自动恢复运动。
 
-每条试验保存 `trial.json`、三路 MP4、`events.jsonl` 和 `timing.json`；会话保存 `session.json`、`summary.json`。视频为 30 fps 编码，曝光/SDK 时间应查日志中的逐帧记录。日志含原始反馈到达时间、实测状态、预测、计划时刻、提交及 SDK 事件；SDK 接受并不等于实际到位。成功率分母固定为所有开始的运动试验，包括失败、超时、接管和设备中止；影子试验不进入分母。无运动试验时成功率为 null。
+每条试验保存 `trial.json`、`events.jsonl` 和 `timing.json`；会话保存 `session.json`、`summary.json`。部署不保存视频，也不记录逐包反馈、逐帧状态和 SDK 事件。事件日志只含预测、计划时刻、下发计时和暂停；SDK 接受并不等于实际到位。日志由独立线程写入，队列满时丢弃新事件并在 `trial.json` 的 `dropped_events` 计数，写入失败记在 `record_error`，两者都不中止试验、不改变试验结果。成功率分母固定为所有开始的运动试验，包括失败、超时、接管和设备中止；影子试验不进入分母。无运动试验时成功率为 null。
 
 结构与时间轴见[图示说明](../../wys/2026-10-04-rail-real-eval-design/explanation.md)。当前硬件时效阈值为待现场验收的初始值，没有开启未经标定的动作提前量或观测延迟补偿。

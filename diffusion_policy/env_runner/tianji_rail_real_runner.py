@@ -1,4 +1,4 @@
-"""Trial recording and inference. The operator loop remains responsive to stop."""
+"""Trial event logging and inference. The operator loop remains responsive to stop."""
 
 from dataclasses import asdict, is_dataclass
 from enum import Enum
@@ -44,98 +44,73 @@ def timing_report(path):
             if event == "prediction":
                 add("preprocess_inference_transfer_ms", (item["returned_ns"] - item["started_ns"]) / 1e6)
                 add("observation_age_at_prediction_return_ms", (item["returned_ns"] - item["anchor_ns"]) / 1e6)
+                # Older sessions only contain the combined duration above.
+                for name, start, end in (
+                        ("observation_read_ms", "started_ns", "observed_ns"),
+                        ("preprocess_ms", "observed_ns", "preprocessed_ns"),
+                        ("input_transfer_ms", "preprocessed_ns", "inputs_ready_ns"),
+                        ("inference_output_transfer_ms", "inputs_ready_ns", "returned_ns")):
+                    if start in item and end in item:
+                        add(name, (item[end] - item[start]) / 1e6)
+                add("observation_age_at_processing_start_ms", (item["started_ns"] - item["anchor_ns"]) / 1e6)
             elif event == "submission":
                 control = item.get("side") or item["kind"]
                 add(f"{control}_submission_call_ms", (item["returned_ns"] - item["started_ns"]) / 1e6)
                 arrivals.setdefault(f"{control}_control", []).append(item["started_ns"])
                 if item["mode"] == "policy" and item["planned_ns"] is not None:
                     add(f"{item['kind']}_target_age_at_submission_ms", (item["started_ns"] - item["planned_ns"]) / 1e6)
-            elif event == "camera":
-                arrivals.setdefault(item["camera"], []).append(item["record"]["time_ns"])
-            elif event == "feedback_arrival":
-                header = item["header"]
-                arrivals.setdefault(header["ref"]["stream"], []).append(header["received_monotonic_ns"])
     for key, stamps in arrivals.items():
         if len(stamps) > 1:
             samples[f"{key}_interval_ms"] = (np.diff(stamps) / 1e6).tolist()
     report = {key: {"count": len(values), "median": float(np.median(values)),
                    "p95": float(np.percentile(values, 95)), "p99": float(np.percentile(values, 99)),
                    "max": float(np.max(values))} for key, values in samples.items() if values}
-    report["scope"] = "host monotonic timestamps; SDK dequeue/acceptance does not establish physical capture/arrival"
+    report["scope"] = "host monotonic timestamps; SDK acceptance does not establish physical arrival"
     write_json(Path(path) / "timing.json", report)
     return report
 
 
 class TrialRecorder:
-    """Bounded asynchronous video/log writer; failures abort the trial."""
+    """Bounded asynchronous event log. Logging problems are counted, never raised into control."""
 
     def __init__(self, path, metadata, capacity=256):
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=False)
         self.error = None
-        self._closed = False
-        self._queue = Queue(capacity)
-        self.frames = {}
+        self.dropped = 0
         self.predictions = 0
+        self._closed = False
+        self._drop_lock = threading.Lock()
+        self._queue = Queue(capacity)
         write_json(self.path / "trial.json", {**metadata, "status": "running"})
         self.metadata = metadata
         self._thread = threading.Thread(target=self._write, name="trial-recorder", daemon=True)
         self._thread.start()
 
-    def _put(self, item):
+    def event(self, event, **values):
         if self._closed:
             return
-        if self.error:
-            raise RuntimeError(self.error)
-        try:
-            self._queue.put_nowait(item)
-        except Full as error:
-            self.error = "Trial recording queue full"
-            raise RuntimeError(self.error) from error
-
-    def event(self, event, **values):
-        self._put(("event", {"event": event, **values}))
-
-    def camera(self, name, image, record):
-        self._put(("camera", (name, image, record)))
+        if event == "prediction":
+            self.predictions += 1
+        if not self.error:
+            try:
+                self._queue.put_nowait({"event": event, **values})
+                return
+            except Full:
+                pass
+        with self._drop_lock:
+            self.dropped += 1
 
     def _write(self):
-        containers, streams = {}, {}
         try:
-            import av
             with (self.path / "events.jsonl").open("w") as file:
                 while True:
                     item = self._queue.get()
                     if item is None:
                         break
-                    kind, value = item
-                    if kind == "event" and value["event"] == "prediction":
-                        self.predictions += 1
-                    if kind == "camera":
-                        name, image, record = value
-                        if name not in containers:
-                            containers[name] = av.open(str(self.path / f"{name}.mp4"), "w")
-                            stream = containers[name].add_stream("libx264", rate=30)
-                            stream.height, stream.width = image.shape[:2]
-                            stream.pix_fmt = "yuv420p"
-                            stream.options = {"crf": "18", "preset": "ultrafast"}
-                            streams[name] = stream
-                        for packet in streams[name].encode(av.VideoFrame.from_ndarray(image, format="rgb24")):
-                            containers[name].mux(packet)
-                        index = self.frames.get(name, 0)
-                        self.frames[name] = index + 1
-                        value = {"event": "camera", "camera": name, "video_frame": index, "record": record}
-                    file.write(json.dumps(value, default=json_value, ensure_ascii=False, allow_nan=False) + "\n")
+                    file.write(json.dumps(item, default=json_value, ensure_ascii=False, allow_nan=False) + "\n")
         except Exception as error:
-            self.error = self.error or f"Trial writer failed: {error}"
-        finally:
-            for name, container in containers.items():
-                try:
-                    for packet in streams[name].encode():
-                        container.mux(packet)
-                    container.close()
-                except Exception as error:
-                    self.error = self.error or f"Video flush failed: {error}"
+            self.error = f"Trial writer failed: {error}"
 
     def close(self, outcome, reason=None):
         self._closed = True
@@ -147,15 +122,12 @@ class TrialRecorder:
             self._thread.join(timeout=15)
         if self._thread.is_alive():
             self.error = self.error or "Recording writer did not stop"
-        if outcome in ("success", "shadow") and any(self.frames.get(f"camera_{i}", 0) == 0 for i in range(3)):
-            self.error = self.error or "Successful trial is missing one or more RGB videos"
         if outcome == "shadow" and not self.predictions:
-            self.error = self.error or "Shadow trial produced no valid model predictions"
-        if not self._thread.is_alive() and (self.path / "events.jsonl").exists():
+            outcome, reason = "device_abort", "Shadow trial produced no valid model predictions"
+        if not self.error:
             timing_report(self.path)
-        result = {**self.metadata, "status": "failed" if self.error else "complete",
-                  "outcome": "device_abort" if self.error else outcome, "reason": self.error or reason,
-                  "frames": self.frames}
+        result = {**self.metadata, "status": "complete", "outcome": outcome, "reason": reason,
+                  "dropped_events": self.dropped, "record_error": self.error}
         write_json(self.path / "trial.json", result)
         return result
 
@@ -241,13 +213,24 @@ class TianjiRailRealRunner:
                         raise RuntimeError(str(error)) from error
                     self._stop.wait(.01)
                     continue
+                observed = time.monotonic_ns()
                 if anchor_previous is not None and anchor - anchor_previous < self.env.config["replanning_steps"] * 1e9 / 30:
                     self._stop.wait(.003)
                     continue
-                prepared = preprocess_observation(obs, self.cfg.task.shape_meta, self.cfg.task.dataset)
-                tensor_obs = {key: torch.from_numpy(value).unsqueeze(0).to(self.policy.device) for key, value in prepared.items()}
-                with torch.inference_mode():
-                    prediction = self.policy.predict_action(tensor_obs)
+                process_predict = getattr(self.policy, "predict_observation", None)
+                process_timing = None
+                if process_predict is not None:
+                    prediction = process_predict(obs)
+                    process_timing = self.policy.last_timing
+                    preprocessed = process_timing["preprocessed_ns"]
+                    inputs_ready = process_timing["inputs_ready_ns"]
+                else:
+                    prepared = preprocess_observation(obs, self.cfg.task.shape_meta, self.cfg.task.dataset)
+                    preprocessed = time.monotonic_ns()
+                    tensor_obs = {key: torch.from_numpy(value).unsqueeze(0).to(self.policy.device) for key, value in prepared.items()}
+                    inputs_ready = time.monotonic_ns()
+                    with torch.inference_mode():
+                        prediction = self.policy.predict_action(tensor_obs)
                 actions = prediction["action"][0].detach().cpu().numpy()
                 returned = time.monotonic_ns()
                 # A stopped/previous trial cannot publish into a new trial.
@@ -255,6 +238,8 @@ class TianjiRailRealRunner:
                     if generation != self._generation or not self._enabled.is_set():
                         continue
                     self.env.emit("prediction", anchor_ns=anchor, started_ns=started, returned_ns=returned,
+                                  observed_ns=observed, preprocessed_ns=preprocessed,
+                                  inputs_ready_ns=inputs_ready, process_timing=process_timing,
                                   actions=actions, alignment=alignment)
                     dropped = self.env.exec_actions(actions, anchor)
                     self.env.emit("prediction_coverage", dropped_steps=dropped,

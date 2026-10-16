@@ -14,10 +14,12 @@ import hydra
 import numpy as np
 from omegaconf import OmegaConf
 import torch
+from threadpoolctl import threadpool_info, threadpool_limits
 
 from diffusion_policy.third_party import bimanual_teleop
 
 from diffusion_policy.env_runner.tianji_rail_real_runner import TianjiRailRealRunner, write_json
+from diffusion_policy.real_world.policy_inference_process import PolicyInferenceProcess
 from diffusion_policy.real_world.tianji_rail_env import (
     PROJECT_ROOT, TianjiRailEnv, load_deployment_config, preprocess_observation,
 )
@@ -68,6 +70,7 @@ def check_inference(policy, cfg, iterations=3):
             "scope": "synthetic images, checkpoint preprocessing/normalizer/EMA, no device or end-to-end latency claim"}
 
 
+@threadpool_limits.wrap(limits=1, user_api="blas")
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, type=Path)
@@ -84,18 +87,23 @@ def main(argv=None):
         raise FileExistsError(f"Evaluation output already exists: {output}")
     if args.motion and not args.check_only and any(box is None for box in config["workspace"].values()):
         parser.error("运动前请填写 config.workspace 的左右臂 min/max")
+    # Small servo matrices must not compete with GPU dispatch through a large
+    # BLAS pool. Limit PyTorch as well, before model initialization/preflight.
+    torch.set_num_threads(1)
     policy, cfg, state_key = load_policy(args.checkpoint, device)
     if config["replanning_steps"] >= policy.n_action_steps:
         raise ValueError("replanning_steps must be smaller than checkpoint n_action_steps")
     if config["history_s"] <= (policy.n_obs_steps - 1) / config["policy_hz"] + config["max_state_gap_s"]:
         raise ValueError("history_s cannot cover checkpoint observation window")
-    torch.set_num_threads(1)
     preflight = check_inference(policy, cfg)
     metadata = {"checkpoint": str(args.checkpoint.resolve()),
         "checkpoint_sha256": _checkpoint_hash(args.checkpoint),
         "state_dict": state_key, "device": device, "seed": torch.initial_seed(), "deployment": config,
         "checkpoint_config": OmegaConf.to_container(cfg, resolve=True), "preflight": preflight,
-        "versions": {name: version(name) for name in ("torch", "torchvision", "numpy", "scipy", "av",
+        "compute_threads": {"torch": torch.get_num_threads(), "blas": [
+            {key: pool[key] for key in ("internal_api", "prefix", "num_threads")}
+            for pool in threadpool_info() if pool["user_api"] == "blas"]},
+        "versions": {name: version(name) for name in ("torch", "torchvision", "numpy", "scipy",
              "zarr", "numcodecs", "quadprog", "hydra-core", "diffusers", "huggingface-hub",
              "robomimic", "dill", "pyrealsense2", "wuji-sdk")}}
     metadata["vendored_dependencies"] = json.loads(Path(bimanual_teleop.__file__).with_name("manifest.json").read_text())
@@ -111,9 +119,19 @@ def main(argv=None):
         write_json(output / "preflight.json", metadata)
         print(f"模型重载和 batch=1 推理通过：{output / 'preflight.json'}")
         return 0
-    env = TianjiRailEnv(config, policy.n_obs_steps, motion=args.motion)
-    runner = TianjiRailRealRunner(env, policy, cfg, metadata, output)
+    n_obs_steps = policy.n_obs_steps
+    # Release the parent's model before the child creates its CUDA context.
+    policy.to("cpu")
+    del policy
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    inference = PolicyInferenceProcess(args.checkpoint, device)
+    metadata["preflight"] = inference.preflight
+    metadata["inference_backend"] = "spawn_process"
+    env = None
     try:
+        env = TianjiRailEnv(config, n_obs_steps, motion=args.motion)
+        runner = TianjiRailRealRunner(env, inference, cfg, metadata, output)
         env.start()
         metadata["camera_metadata"] = env.cameras.metadata
         metadata["hand_metadata"] = {side: hand.metadata for side, hand in env.hands.items()}
@@ -124,10 +142,15 @@ def main(argv=None):
         report = runner.run()
         print(f"运动试验 {report['motion_trials']} 次，成功率 {report['success_rate']}；记录：{output}")
     except Exception as error:
+        output.mkdir(parents=True, exist_ok=True)
         write_json(output / "failure.json", {"error": str(error), "monotonic_ns": time.monotonic_ns()})
         raise
     finally:
-        env.close()
+        try:
+            if env is not None:
+                env.close()
+        finally:
+            inference.close()
     return 0
 
 

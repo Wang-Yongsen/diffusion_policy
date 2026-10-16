@@ -1,5 +1,5 @@
 {
-    "python.defaultInterpreterPath": "/opt/miniconda3/envs/tianji-rail-diffusion-policy/bin/python",
+    "python.defaultInterpreterPath": "/home/yuchen/anaconda3/envs/tianji-rail-diffusion-policy/bin/python",
     "python.terminal.activateEnvironment": false,
     "terminal.integrated.defaultProfile.linux": "tianji-rail-diffusion-policy",
     "terminal.integrated.profiles.linux": {

@@ -181,29 +181,12 @@ class TianjiRailEnv:
         if recorder is not None:
             recorder.event(event, monotonic_ns=time.monotonic_ns(), **values)
 
-    def try_publish(self, sample):
-        try:
-            # Record every feedback arrival separately from the state_hz FK snapshots.
-            sequences = ({side: state.source_sequence for side, state in sample.payload.arms.items()}
-                         if hasattr(sample.payload, "arms") else None)
-            self.emit("feedback_arrival", header=sample.header, arm_source_sequences=sequences)
-            return True
-        except Exception:
-            return False
-
-    def try_event(self, event):
-        try:
-            self.emit("device_event", value=event)
-            return True
-        except Exception:
-            return False
-
     def start(self):
         try:
             self.session.open()
-            self.driver.start(self)
+            self.driver.start()
             for hand in self.hands.values():
-                hand.start(self)
+                hand.start()
             self.cameras.start()
             self.runtime.start()
             self._collector = threading.Thread(target=self._collect, name="policy-observation", daemon=True)
@@ -218,11 +201,10 @@ class TianjiRailEnv:
             if history and stamp <= history[-1][0]:
                 if stamp < history[-1][0]:
                     raise RuntimeError(f"{key}: host timestamp moved backwards")
-                return False
+                return
             history.append((int(stamp), values))
             while history and stamp - history[0][0] > self.config["history_s"] * 1e9:
                 history.popleft()
-        return True
 
     def _collect(self):
         next_state = 0.
@@ -231,9 +213,6 @@ class TianjiRailEnv:
                 for name, kind, image, record in self.cameras.poll():
                     if kind == "rgb":
                         self._append(name, record.time_ns, image)
-                        recorder = self.recorder
-                        if recorder is not None:
-                            recorder.camera(name, image, record)
                 if time.monotonic() >= next_state:
                     next_state = time.monotonic() + 1 / self.config["state_hz"]
                     sample = self.driver.get_latest()
@@ -248,18 +227,14 @@ class TianjiRailEnv:
                                 raise RuntimeError(f"{side}: invalid measured arm joints")
                             pose = self.kinematics.fk(side, tuple(q))
                             value = np.r_[pose.position_m, Rotation.from_quat(pose.orientation_xyzw).as_rotvec()]
-                            if self._append(f"arms/{side}", sample.header.received_monotonic_ns, value):
-                                self.emit("state", stream=f"arms/{side}", header=sample.header,
-                                          joint_rad=q, eef_pose=value,
-                                          source_sequence=sample.payload.arms[side].source_sequence)
+                            self._append(f"arms/{side}", sample.header.received_monotonic_ns, value)
                     for side, hand in self.hands.items():
                         sample = hand.get_latest()
                         if sample is not None and sample.header.valid:
                             q = np.asarray(sample.payload.position_rad, dtype=float)
                             if sample.payload.joint_names != JOINT_NAMES or q.shape != (20,) or not np.isfinite(q).all():
                                 raise RuntimeError(f"{side}: invalid measured hand joints")
-                            if self._append(f"hands/{side}", sample.header.received_monotonic_ns, q):
-                                self.emit("state", stream=f"hands/{side}", header=sample.header, joint_rad=q)
+                            self._append(f"hands/{side}", sample.header.received_monotonic_ns, q)
                 if self.runtime.active:
                     problem = self.health_problem()
                     if problem:
@@ -272,8 +247,6 @@ class TianjiRailEnv:
     def health_problem(self):
         if self.error:
             return self.error
-        if self.recorder is not None and self.recorder.error:
-            return self.recorder.error
         for device in (self.session, self.driver, *self.hands.values()):
             health = device.health()
             if not health.ready:

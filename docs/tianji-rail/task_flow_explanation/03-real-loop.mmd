@@ -18,7 +18,7 @@ flowchart TD
     devices["绝对EEF / 手关节目标 → 设备执行<br/>control/arm/cartesian.py + arm/servo.py<br/>devices/tianji/model.py：FK / IK<br/>devices/tianji/driver.py + sdk.py<br/>devices/wuji/adapter.py：左右手驱动<br/>实际图像 / 状态反馈返回Env"]
   end
   subgraph record["F · 试验记录与汇总 〔Runner 中的 TrialRecorder〕"]
-    log["TrialRecorder + summarize_trials 〔env_runner/tianji_rail_real_runner.py〕<br/>逐试验：trial.json / 三路MP4 / events.jsonl / timing.json；会话：session.json / summary.json<br/>成功率 = 成功运动试验 / 所有已开始运动试验；影子试验不进入分母"]
+    log["TrialRecorder + summarize_trials 〔env_runner/tianji_rail_real_runner.py〕<br/>逐试验：trial.json / events.jsonl / timing.json，不保存视频；会话：session.json / summary.json<br/>成功率 = 成功运动试验 / 所有已开始运动试验；影子试验不进入分母"]
   end
   entry_n --> history
   entry_n --> infer

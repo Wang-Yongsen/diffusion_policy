@@ -44,7 +44,7 @@ FIGURES = [
              node("policy", (1225, 715, 500, 265), "6  Policy + 扩散模型", "观测编码 → Transformer 条件去噪", "训练：compute_loss", "推理：predict_action → 8步动作", "policy/diffusion_transformer_", "hybrid_image_policy.py", group="train"),
              node("ckpt", (550, 1060, 700, 110), "7  checkpoint", "模型 + EMA + 归一化器 + 配置 + 训练状态", "workspace/base_workspace.py", group="train"),
              node("off", (75, 1450, 750, 145), "eval.py → TianjiRailOfflineRunner", "env_runner/tianji_rail_offline_runner.py", "预测 vs 标签[1:9] → 位置mm / 旋转° / 手关节°", "输出：eval_log.json + offline_report.json", group="offline"),
-             node("live", (975, 1450, 750, 145), "eval_tianji_rail.py → Env / Runner / Runtime", "对齐实测观测 → 推理 → 定时目标 → 设备反馈", "tianji_rail_env.py / tianji_rail_real_runner.py", "tianji_policy_runtime.py → 日志、视频、成功率", group="real"),
+             node("live", (975, 1450, 750, 145), "eval_tianji_rail.py → Env / Runner / Runtime", "对齐实测观测 → 推理 → 定时目标 → 设备反馈", "tianji_rail_env.py / tianji_rail_real_runner.py", "tianji_policy_runtime.py → 事件日志、成功率", group="real"),
          ], edges=[
              edge("capture", "finalize", ("right", "left")), edge("finalize", "convert", ("right", "left")),
              edge("convert", "zarr", ("bottom", "right"), [(1475, 535)]),
@@ -99,7 +99,7 @@ FIGURES = [
              node("trial", (975, 705, 750, 155), "run / _begin / _end", "s开始；p接管；y成功；n失败；q退出", "操作员定义结果，记录超时、设备中止与接管", "切换试验时阻止旧推理结果发布", group="runner"),
              node("schedule", (975, 1070, 750, 250), "exec_actions → runtime.submit → 控制线程", "名义时刻 t0 + i/30 秒；丢弃已过期动作", "校验工作空间 / 跳变 / 速度；替换未来队列", "双臂线程200 Hz；左手、右手各120 Hz", "real_world/tianji_policy_runtime.py", "故障或覆盖耗尽：清队列并请求暂停", group="runtime"),
              node("devices", (75, 1070, 750, 250), "绝对EEF / 手关节目标 → 设备执行", "control/arm/cartesian.py + arm/servo.py", "devices/tianji/model.py：FK / IK", "devices/tianji/driver.py + sdk.py", "devices/wuji/adapter.py：左右手驱动", "实际图像 / 状态反馈返回Env", group="device"),
-             node("log", (75, 1490, 1650, 120), "TrialRecorder + summarize_trials 〔env_runner/tianji_rail_real_runner.py〕", "逐试验：trial.json / 三路MP4 / events.jsonl / timing.json；会话：session.json / summary.json", "成功率 = 成功运动试验 / 所有已开始运动试验；影子试验不进入分母", group="record"),
+             node("log", (75, 1490, 1650, 120), "TrialRecorder + summarize_trials 〔env_runner/tianji_rail_real_runner.py〕", "逐试验：trial.json / events.jsonl / timing.json，不保存视频；会话：session.json / summary.json", "成功率 = 成功运动试验 / 所有已开始运动试验；影子试验不进入分母", group="record"),
          ], edges=[
              edge("entry_n", "history", ("bottom", "right"), [(900, 385), (900, 567)]),
              edge("entry_n", "infer", ("bottom", "left"), [(900, 385), (900, 567)]),

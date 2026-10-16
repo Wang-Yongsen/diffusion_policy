@@ -16,7 +16,7 @@ flowchart TD
     off["eval.py → TianjiRailOfflineRunner<br/>env_runner/tianji_rail_offline_runner.py<br/>预测 vs 标签[1:9] → 位置mm / 旋转° / 手关节°<br/>输出：eval_log.json + offline_report.json"]
   end
   subgraph real["D · 真机闭环评估 〔DP；本地设备接口快照〕"]
-    live["eval_tianji_rail.py → Env / Runner / Runtime<br/>对齐实测观测 → 推理 → 定时目标 → 设备反馈<br/>tianji_rail_env.py / tianji_rail_real_runner.py<br/>tianji_policy_runtime.py → 日志、视频、成功率"]
+    live["eval_tianji_rail.py → Env / Runner / Runtime<br/>对齐实测观测 → 推理 → 定时目标 → 设备反馈<br/>tianji_rail_env.py / tianji_rail_real_runner.py<br/>tianji_policy_runtime.py → 事件日志、成功率"]
   end
   capture --> finalize
   finalize --> convert

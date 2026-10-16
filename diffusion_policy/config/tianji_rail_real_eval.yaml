@@ -34,14 +34,19 @@ max_hand_jump_rad: 0.3
 max_position_speed_m_s: 0.15
 max_rotation_speed_rad_s: 0.8
 max_hand_speed_rad_s: 2.0
-# 现场测量后填写两臂各自基座系下法兰可用范围（米）。null 会拒绝运动。
+# 按当前需求将两臂各自基座系下的法兰 XYZ 范围放宽至每轴 ±1000 米，近似不限制位置。
+# 速度、动作跳变及关节限制仍生效；null 会拒绝运动。
 # 示例格式：left: {min: [x,y,z], max: [x,y,z]}；不能当作碰撞检测。
 workspace:
-  left: null
-  right: null
+  left:
+    min: [-1000.0, -1000.0, -1000.0]
+    max: [1000.0, 1000.0, 1000.0]
+  right:
+    min: [-1000.0, -1000.0, -1000.0]
+    max: [1000.0, 1000.0, 1000.0]
 # 每次试验超时（秒）；启动不会自动回位或张手。
 trial_timeout_s: 30.0
-# 新建评估目录，已有目录拒绝覆盖；每次试验记录三路 RGB、状态和事件。
+# 新建评估目录，已有目录拒绝覆盖；每次试验只记录预测、调度、下发计时、暂停和结果，不保存视频。
 output_dir: data/real_eval
-# 异步编码/日志队列容量；满时中止试验，不能静默丢记录。
-record_queue_capacity: 256
+# 异步事件日志队列容量；满时丢弃新事件并在 trial.json 的 dropped_events 计数，不中止试验。
+record_queue_capacity: 4096
