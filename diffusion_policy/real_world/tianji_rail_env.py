@@ -154,12 +154,16 @@ class TianjiRailEnv:
     def __init__(self, config, n_obs_steps, *, motion=False):
         self.config, self.n_obs_steps, self.motion = config, n_obs_steps, motion
         self.recorder = None
+        self.trace = None
+        self.record_observations = False
+        self._measured_log_at = 0.
         self.error = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._collector = None
         self._arm_sequences = {}
         self._shadow_chunk_end_ns = 0
+        self._hand_hold = None
         self.histories = {key: deque() for key in ("camera_0", "camera_1", "camera_2",
                          "arms/left", "arms/right", "hands/left", "hands/right")}
         arm_config = load_arm_config(config["arm_config"])
@@ -179,6 +183,13 @@ class TianjiRailEnv:
         self.cameras = CameraRig(camera_config)
         self.runtime = TianjiPolicyRuntime(self.arm, self.hands, config, self.health_problem, self.emit)
 
+    def enable_trace(self, trace):
+        if self.trace is not None:
+            raise RuntimeError("A trace is already attached")
+        self.trace = trace
+        self.runtime.trace = trace
+        trace.install_on(self.arm)
+
     def emit(self, event, **values):
         recorder = self.recorder
         if recorder is not None:
@@ -187,9 +198,15 @@ class TianjiRailEnv:
     def start(self):
         try:
             self.session.open()
-            self.driver.start()
-            for hand in self.hands.values():
-                hand.start()
+            sink = None if self.trace is None else self.trace.sink
+            if sink is None:
+                self.driver.start()
+                for hand in self.hands.values():
+                    hand.start()
+            else:
+                self.driver.start(sink)
+                for hand in self.hands.values():
+                    hand.start(sink)
             self.cameras.start()
             self.runtime.start()
             self._shadow_chunk_end_ns = time.monotonic_ns()
@@ -239,6 +256,7 @@ class TianjiRailEnv:
                             if sample.payload.joint_names != JOINT_NAMES or q.shape != (20,) or not np.isfinite(q).all():
                                 raise RuntimeError(f"{side}: invalid measured hand joints")
                             self._append(f"hands/{side}", sample.header.received_monotonic_ns, q)
+                    self._log_measured()
                 if self.runtime.active or self.runtime.sync_waiting:
                     problem = self.health_problem()
                     if problem:
@@ -262,6 +280,37 @@ class TianjiRailEnv:
                 if not history or now - history[-1][0] > budget * 1e9:
                     return f"{key}: missing/stale history"
         return None
+
+    def latest_measured(self):
+        """Latest FK poses and hand joints already stored by the collector. No new FK."""
+        with self._lock:
+            sample = {}
+            for key in ("arms/left", "arms/right", "hands/left", "hands/right"):
+                history = self.histories[key]
+                if not history:
+                    return None
+                stamp, value = history[-1]
+                sample[key.replace("/", "_")] = {"stamp_ns": int(stamp),
+                                                 "value": np.asarray(value, dtype=np.float64).copy()}
+            return sample
+
+    def _log_measured(self):
+        if not self.record_observations or self.recorder is None or time.monotonic() < self._measured_log_at:
+            return
+        self._measured_log_at = time.monotonic() + 1. / self.config["policy_hz"]
+        measured = self.latest_measured()
+        if measured is not None:
+            self.emit("measured", **measured)
+
+    def feedback_since(self, since_ns):
+        """Copy actual flange poses and hand joints at or after ``since_ns``. No new FK."""
+        since_ns = int(since_ns)
+        with self._lock:
+            def take(key):
+                return [(int(stamp), np.asarray(value, dtype=np.float64).copy())
+                        for stamp, value in self.histories[key] if stamp >= since_ns]
+            return {"arms": {side: take(f"arms/{side}") for side in SIDES},
+                    "hands": {side: take(f"hands/{side}") for side in SIDES}}
 
     def latest_anchor_ns(self):
         """The anchor get_obs would align to, without health checks or image copies."""
@@ -287,6 +336,7 @@ class TianjiRailEnv:
         if any(self.config["workspace"][side] is None for side in SIDES):
             raise ValueError("Fill both measured workspaces before motion")
         obs, _, _ = self.get_obs()
+        self.stop_hand_hold()
         self.runtime.seed(np.r_[obs["robot_eef_pose"][-1], obs["hand_joint"][-1]])
         try:
             for hand in self.hands.values():
@@ -302,12 +352,13 @@ class TianjiRailEnv:
                        for side in SIDES] + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
             self.runtime.seed(seed, arm_ready=True)
         except Exception as error:
+            self.stop_hand_hold(raise_error=False)
             self.runtime.pause(error, fault=True)
             raise
 
-    def exec_actions(self, actions, anchor_ns):
+    def exec_actions(self, actions, anchor_ns, prediction_id=None):
         if self.motion:
-            return self.runtime.submit(actions, anchor_ns)
+            return self.runtime.submit(actions, anchor_ns, prediction_id=prediction_id)
         if self.config["inference_mode"] == "sync":
             selected, times, dropped = retimed_actions(actions, time.monotonic_ns(),
                 self.config["policy_hz"], self.config["submit_margin_s"])
@@ -328,8 +379,20 @@ class TianjiRailEnv:
         self._shadow_chunk_end_ns = time.monotonic_ns()
         self.runtime.pause(reason)
 
+    def stop_hand_hold(self, *, raise_error=True):
+        hold = self._hand_hold
+        self._hand_hold = None
+        if hold is None:
+            return
+        hold.stop()
+        if raise_error and hold.error is not None:
+            raise RuntimeError(str(hold.error))
+
     def close(self):
-        self._stop.set()
+        try:
+            self.stop_hand_hold(raise_error=False)
+        finally:
+            self._stop.set()
         if self._collector is not None:
             self._collector.join(timeout=2)
         try:

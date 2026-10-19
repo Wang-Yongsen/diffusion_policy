@@ -32,13 +32,15 @@ max_state_gap_s: 0.05
 max_image_skew_s: 0.04
 max_camera_span_s: 0.05
 # 策略动作与开始姿态/上一目标的最大跳变：米、弧度、弧度。
-max_position_jump_m: 0.04
-max_rotation_jump_rad: 0.3
-max_hand_jump_rad: 0.3
+# 默认部署采用已有宽松配置的上限。
+max_position_jump_m: 0.1
+max_rotation_jump_rad: 0.45
+max_hand_jump_rad: 1.2
 # 相邻策略目标按真实时间间隔检查速度；双臂还有原执行器的关节约束。
-max_position_speed_m_s: 0.15
-max_rotation_speed_rad_s: 0.8
-max_hand_speed_rad_s: 2.0
+# max_hand_speed_rad_s 同时限制运行时手指速度，放宽后手指实际动得更快。
+max_position_speed_m_s: 1.2
+max_rotation_speed_rad_s: 4.0
+max_hand_speed_rad_s: 8.0
 # 按当前需求将两臂各自基座系下的法兰 XYZ 范围放宽至每轴 ±1000 米，近似不限制位置。
 # 速度、动作跳变及关节限制仍生效；null 会拒绝运动。
 # 示例格式：left: {min: [x,y,z], max: [x,y,z]}；不能当作碰撞检测。
@@ -51,7 +53,8 @@ workspace:
     max: [1000.0, 1000.0, 1000.0]
 # 每次试验超时（秒）；启动不会自动回位或张手。
 trial_timeout_s: 30.0
-# 新建评估目录，已有目录拒绝覆盖；每次试验只记录预测、调度、下发计时、暂停和结果，不保存视频。
+# 新建评估目录，已有目录拒绝覆盖。默认只记录预测、调度、下发计时、暂停和结果。
+# 入口 --record-observations 额外保存模型输入的低维状态、最多 6 个图像窗口，以及 30 Hz 实测位姿。
 output_dir: data/real_eval
 # 异步事件日志队列容量；满时丢弃新事件并在 trial.json 的 dropped_events 计数，不中止试验。
 record_queue_capacity: 4096

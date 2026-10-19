@@ -7,13 +7,15 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import create_autospec, patch
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 import yaml
 
-from diffusion_policy.third_party.bimanual_teleop.types import JointTarget, Submission
+from diffusion_policy.third_party.bimanual_teleop.control.arm.cartesian import TianjiCartesianExecutor
+from diffusion_policy.third_party.bimanual_teleop.devices.tianji.driver import TianjiDriver
+from diffusion_policy.third_party.bimanual_teleop.types import ControlProfile, JointTarget, Submission
 from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import JOINT_NAMES
 from diffusion_policy.real_world.tianji_policy_runtime import (
     HOLD_TTL_NS, TianjiPolicyRuntime, future_actions, split_action, validate_actions,
@@ -161,6 +163,14 @@ class RealEvaluationTests(unittest.TestCase):
             runner._infer()
             self.assertIsNone(runner.error)
         self.assertEqual(submitted, [1_000_000_000, 1_100_000_000])
+
+    def test_arm_configuration_matches_driver_interface(self):
+        # Enforce the real driver's signature without connecting to hardware.
+        driver = create_autospec(TianjiDriver, instance=True)
+        executor = TianjiCartesianExecutor(driver, None)
+        profile = ControlProfile("offline-arm", "cartesian", {})
+        executor.configure(profile)
+        driver.configure.assert_called_once_with(profile)
 
     def test_shadow_lifecycle_never_configures_enables_or_submits(self):
         module = "diffusion_policy.real_world.tianji_rail_env"
@@ -436,7 +446,7 @@ class RealEvaluationTests(unittest.TestCase):
             bad[0, index] = value
             with self.assertRaises(ValueError):
                 validate_actions(bad, stamps, np.zeros(52), cfg)
-        actions[1, 0] = .01
+        actions[1, 0] = .05
         with self.assertRaisesRegex(ValueError, "too fast"):
             validate_actions(actions, stamps, np.zeros(52), cfg)
         cfg["workspace"]["left"] = None
@@ -463,6 +473,50 @@ class RealEvaluationTests(unittest.TestCase):
             report = summarize_trials(root)
             self.assertEqual(report["motion_trials"], 2)
             self.assertEqual(report["success_rate"], .5)
+
+    def test_observation_snapshot_is_a_side_file(self):
+        image = np.zeros((2, 4, 5, 3), np.uint8)
+        pose = np.arange(24, dtype=np.float32).reshape(2, 12)
+        with tempfile.TemporaryDirectory() as root:
+            recorder = TrialRecorder(Path(root) / "trial", {"mode": "motion"})
+            recorder.snapshot("obs_00", anchor_ns=10, prediction_index=0,
+                              camera_0=image, robot_eef_pose=pose)
+            recorder.event("prediction", anchor_ns=10, started_ns=1, observed_ns=2,
+                           preprocessed_ns=3, inputs_ready_ns=4, returned_ns=5,
+                           actions=np.zeros((1, 1)), alignment={})
+            result = recorder.close("success")
+            trial = Path(root) / "trial"
+            self.assertEqual(result["dropped_events"], 0)
+            self.assertEqual(sorted(path.name for path in trial.iterdir()),
+                             ["events.jsonl", "obs_00.npz", "timing.json", "trial.json"])
+            loaded = np.load(trial / "obs_00.npz")
+            np.testing.assert_array_equal(loaded["camera_0"], image)
+            np.testing.assert_array_equal(loaded["robot_eef_pose"], pose)
+            events = [json.loads(line) for line in (trial / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(events[0]["file"], "obs_00.npz")
+        self.assertNotIn("_arrays", events[0])
+        self.assertNotIn("camera_0", events[0])
+        self.assertEqual(events[0]["prediction_index"], 0)
+
+    def test_latest_measured_copies_collector_history(self):
+        module = "diffusion_policy.real_world.tianji_rail_env"
+        with patch(f"{module}.TianjiKinematics") as kine_type, patch(f"{module}.TianjiDriver"), \
+             patch(f"{module}.WujiSdkSession"), patch(f"{module}.WujiHandDriver"), patch(f"{module}.CameraRig"):
+            kine_type.return_value.model.digest = config()["expected_model_sha256"]
+            env = TianjiRailEnv(config(), 2)
+        self.assertIsNone(env.latest_measured())
+        for key, history in histories().items():
+            env.histories[key].extend(history)
+        measured = env.latest_measured()
+        np.testing.assert_allclose(measured["arms_left"]["value"], histories()["arms/left"][-1][1])
+        measured["arms_left"]["value"][0] = 99
+        self.assertNotEqual(env.histories["arms/left"][-1][1][0], 99)
+        logged = []
+        env.record_observations = True
+        env.recorder = SimpleNamespace(event=lambda event, **values: logged.append((event, values)))
+        env._log_measured()
+        env._log_measured()
+        self.assertEqual([item[0] for item in logged], ["measured"])
 
     def test_full_event_queue_drops_and_counts_without_raising(self):
         real_dumps, entered, release = json.dumps, threading.Event(), threading.Event()
@@ -581,6 +635,43 @@ class RealEvaluationTests(unittest.TestCase):
         # A frame newer than every measured state cannot be the anchor yet.
         env.histories["camera_0"].append((1_060_000_000, np.zeros((16, 16, 3), np.uint8)))
         self.assertEqual(env.latest_anchor_ns(), anchor)
+
+    def test_trace_does_not_change_scheduled_actions_or_times(self):
+        from diffusion_policy.real_world.decision_trace import SessionTrace
+        actions = np.zeros((8, 52))
+        actions[:, 0] = np.linspace(0, .02, 8)
+
+        def run(trace):
+            runtime = self.runtime("sync")
+            runtime.trace = trace
+            runtime.submit(actions, self.now - 1, prediction_id=None if trace is None else 3)
+            times = [int(stamp) for stamp in self.events[-1][1]["times_ns"]]
+            self.now = times[0]
+            runtime.tick("arm")
+            pose = runtime.arm.commands[-1].tool_poses["left"].position_m
+            return times, pose, len(runtime.arm.commands)
+
+        plain = run(None)
+        traced = run(SessionTrace(decision_capacity=2, feedback_capacity=2, command_capacity=4,
+                                  hand_capacity=2, status_capacity=2))
+        self.assertEqual(plain[0], traced[0])
+        self.assertEqual(plain[1], traced[1])
+        self.assertEqual(plain[2], traced[2])
+        schedule = next(values for event, values in reversed(self.events) if event == "schedule")
+        self.assertEqual(schedule["prediction_id"], 3)
+
+    def test_motion_begin_engages_without_homing(self):
+        calls = []
+        env = SimpleNamespace(
+            motion=True, config=config(), recorder=None, error=None,
+            engage=lambda: calls.append("engage"),
+            pause=lambda reason: None)
+        with tempfile.TemporaryDirectory() as root:
+            runner = TianjiRailRealRunner(env, SimpleNamespace(), {}, {}, Path(root) / "session")
+            runner._begin()
+            self.assertEqual(calls, ["engage"])
+            self.assertTrue(runner._enabled.is_set())
+            runner._end("takeover", "test")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from diffusion_policy.third_party import bimanual_teleop
 from diffusion_policy.env_runner.tianji_rail_real_runner import TianjiRailRealRunner, write_json
 from diffusion_policy.real_world.policy_inference_process import PolicyInferenceProcess
 from diffusion_policy.real_world.tianji_policy_runtime import INFERENCE_MODES
+from diffusion_policy.real_world.decision_trace import SessionTrace, runtime_files, write_provenance
 from diffusion_policy.real_world.tianji_rail_env import (
     PROJECT_ROOT, TianjiRailEnv, load_deployment_config, preprocess_observation,
 )
@@ -89,6 +90,7 @@ def check_inference(policy, cfg, iterations=3):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, type=Path)
+    parser.add_argument("--batch-seed", type=int, help="正式第0次预测前重置采样种子；预热不占批次噪声")
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
     parser.add_argument("--device", help="覆盖配置中的模型设备，例如 cpu 或 cuda:0")
     parser.add_argument("--inference-mode", choices=INFERENCE_MODES,
@@ -96,6 +98,11 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, help="新建会话目录，不覆盖已有目录")
     parser.add_argument("--check-only", action="store_true", help="只重载模型与模拟输入推理，不连接设备")
     parser.add_argument("--motion", action="store_true", help="允许手动接合；必须已填写工作空间")
+    parser.add_argument("--record-observations", action="store_true",
+                        help="试验中额外记录模型输入的低维状态，以及少量图像窗口和 30 Hz 实测位姿")
+    parser.add_argument("--trace", action="store_true",
+                        help="把每次决策的原始输入、伺服命令和反馈留在内存，运动结束后再落盘")
+    parser.add_argument("--trace-capacity", type=int, default=48, help="完整记录最多保存多少次决策")
     args = parser.parse_args(argv)
     config = load_deployment_config(args.config)
     device = args.device or config["device"]
@@ -119,12 +126,16 @@ def main(argv=None):
         "checkpoint_sha256": _checkpoint_hash(args.checkpoint),
         "state_dict": state_key, "device": device, "seed": torch.initial_seed(), "deployment": config,
         "checkpoint_config": OmegaConf.to_container(cfg, resolve=True), "preflight": preflight,
+        "record_observations": bool(args.record_observations),
         "compute_threads": {"torch": torch.get_num_threads(), "blas": [
             {key: pool[key] for key in ("internal_api", "prefix", "num_threads")}
             for pool in threadpool_info() if pool["user_api"] == "blas"]},
         "versions": {name: version(name) for name in ("torch", "torchvision", "numpy", "scipy",
              "zarr", "numcodecs", "quadprog", "hydra-core", "diffusers", "huggingface-hub",
              "robomimic", "dill", "pyrealsense2", "wuji-sdk")}}
+    metadata["batch_seed"] = args.batch_seed
+    if args.batch_seed is not None:
+        metadata["seed"] = int(args.batch_seed)
     metadata["vendored_dependencies"] = json.loads(Path(bimanual_teleop.__file__).with_name("manifest.json").read_text())
     metadata["device_configs"] = {key: yaml.safe_load(Path(config[key]).read_text())
                                   for key in ("arm_config", "hand_config", "camera_config")}
@@ -133,6 +144,9 @@ def main(argv=None):
         revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
         changes = subprocess.run(["git", "-C", str(root), "status", "--porcelain"], capture_output=True, text=True)
         metadata["source_revisions"][name] = {"commit": revision.stdout.strip(), "dirty": bool(changes.stdout.strip())}
+    print(f"checkpoint sha256 {metadata['checkpoint_sha256']}")
+    if args.trace and args.trace_capacity < 1:
+        parser.error("--trace-capacity 须为正整数")
     if args.check_only:
         output.mkdir(parents=True, exist_ok=False)
         write_json(output / "preflight.json", metadata)
@@ -144,13 +158,23 @@ def main(argv=None):
     del policy
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    inference = PolicyInferenceProcess(args.checkpoint, device)
+    inference = PolicyInferenceProcess(args.checkpoint, device, capture_rng=args.trace)
     metadata["preflight"] = inference.preflight
     metadata["inference_backend"] = "spawn_process"
     env = None
+    trace = None
     try:
         env = TianjiRailEnv(config, n_obs_steps, motion=args.motion)
-        runner = TianjiRailRealRunner(env, inference, cfg, metadata, output)
+        if args.trace:
+            trace = SessionTrace(decision_capacity=args.trace_capacity)
+            env.enable_trace(trace)
+        env.record_observations = args.record_observations and trace is None
+        runner = TianjiRailRealRunner(env, inference, cfg, metadata, output,
+                                      record_observations=args.record_observations, trace=trace)
+        if trace is not None:
+            files = runtime_files()
+            files["eval_tianji_rail"] = Path(__file__).resolve()
+            write_provenance(output, files, PROJECT_ROOT)
         env.start()
         metadata["camera_metadata"] = env.cameras.metadata
         metadata["hand_metadata"] = {side: hand.metadata for side, hand in env.hands.items()}
