@@ -35,7 +35,9 @@ from diffusion_policy.real_world.tianji_rail_env import PROJECT_ROOT, load_deplo
 
 
 DEFAULT_CHECKPOINT = PROJECT_ROOT / "data/outputs/2026.10.16/23.09.56_tianji_rail/checkpoints/epoch=0050.ckpt"
-DEFAULT_CONFIG = PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval_loose.yaml"
+DEFAULT_CONFIG = PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml"
+# The batch checkpoint was trained at 30 Hz; these values match the former loose config.
+BATCH_OVERRIDES = ("policy_hz=30", "replanning_steps=2")
 DEFAULT_DATASET = PROJECT_ROOT / "data/replay_obs/rail_place3_episode_000000.zarr"
 FREEZE_FILES = ("visual_candidate.json", "stability_gate.json", "initialization.json",
                 "runtime_expected.json", "integration_status.json")
@@ -74,9 +76,8 @@ def slot_item(plan, slot_id):
 
 
 def deployment_config(path, plan):
-    config = load_deployment_config(path)
-    # The loose file supplies the jump, speed and workspace limits. The batch
-    # itself stays on the original synchronous retiming and the 10 s / 24 decision cap.
+    config = load_deployment_config(path, BATCH_OVERRIDES)
+    # The batch stays on the original synchronous retiming and the 10 s / 24 decision cap.
     config["inference_mode"] = "sync"
     config["trial_timeout_s"] = float(plan["limits"]["active_duration_s"])
     return config

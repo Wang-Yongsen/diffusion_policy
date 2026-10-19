@@ -1,6 +1,6 @@
 # 汽车导轨任务快速使用
 
-本项目负责模型训练、离线评估和真机评估；数据采集、整理和转换在 [bimanual-teleop](../../../bimanual-teleop/README.md) 中完成。模型使用三路 RGB、双臂末端位姿和双手关节，预测52维动作。构建状态见[分阶段计划](../../plan/tianji-rail-build-plan.md)。
+本项目负责模型训练、离线评估和真机评估；数据采集、整理和转换在 [bimanual-teleop](../../../bimanual-teleop/README.md) 中完成。模型分两种动作空间：**末端版**（`eef`）使用三路RGB、双臂末端位姿和双手关节，预测52维动作；**关节版**（`joint`）使用三路RGB、双臂关节和双手关节，预测54维动作。两者共用同一套训练配置和部署配置，训练时用命令行参数选择动作空间，部署时从 checkpoint 自动识别。构建状态见[分阶段计划](../../plan/tianji-rail-build-plan.md)。
 
 ## 1．环境
 
@@ -33,9 +33,16 @@ python -c "import sys; print(sys.executable)"
 
 **每次启动训练都在命令行指定 `task.dataset.dataset_path`，选择本次使用的 `.zarr` 数据集。** 路径可以是绝对路径，也可以相对于 `diffusion_policy` 项目根目录。配置文件中的路径只是预设值，按下方模板在每次运行时覆盖。Dataset负责来源划分、连续片段内采样及训练集归一化。
 
-当前 `task.sample_hz=10`，要求训练数据采样频率为10 Hz，相邻观测和动作间隔100 ms；该参数同时传给 Dataset，并保存到 checkpoint。训练启动会校验Zarr的 `target_fps` 和连续片段内的时间间隔。更换数据频率时，要同步调整 `task.sample_hz`，并在真机部署时使用相同的 `policy_hz`；不能仅修改已有Zarr的频率属性。
+当前[任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)为 `task.sample_hz=30`，要求训练数据采样频率为30 Hz；10 Hz数据在命令行加 `task.sample_hz=10`。该参数同时传给 Dataset，并保存到 checkpoint。训练启动会校验Zarr的 `target_fps` 和连续片段内的时间间隔。真机部署的 `policy_hz` 必须与 checkpoint 的频率相同（部署配置默认10，30 Hz模型加 `--set policy_hz=30`，见第5节）；不能仅修改已有Zarr的频率属性。
 
-当前模型的数据契约为三路RGB原图640×480、12维末端位姿、40维手关节和52维绝对EEF动作（左臂6、右臂6、左手20、右手20）；位置用米，旋转向量和关节角用弧度。原始演示边界为 `meta/episode_ends`，连续片段边界为 `meta/segment_ends`，训练窗口不跨片段边界。数据中的其他字段不会自动成为模型输入。
+两种动作空间的数据契约如下，由Zarr根属性 `action_space` 标明；位置用米，旋转向量和关节角用弧度，动作均为绝对目标：
+
+| 动作空间 | 训练参数                          | 低维观测                                        | 动作                                     |
+| -------- | --------------------------------- | ----------------------------------------------- | ---------------------------------------- |
+| 末端版   | `task.action_space=eef`（默认） | `robot_eef_pose` 12维（每臂XYZ＋旋转向量）、`hand_joint` 40维 | 52维：左臂6、右臂6、左手20、右手20 |
+| 关节版   | `task.action_space=joint`       | `robot_joint` 14维（每臂7关节）、`hand_joint` 40维 | 54维：左臂7、右臂7、左手20、右手20 |
+
+两者的图像输入相同，均为三路RGB原图640×480。训练参数与Zarr的 `action_space` 不一致时，Dataset 启动即报错。原始演示边界为 `meta/episode_ends`，连续片段边界为 `meta/segment_ends`，训练窗口不跨片段边界。数据中的其他字段不会自动成为模型输入。
 
 ## 3．训练
 
@@ -43,7 +50,7 @@ python -c "import sys; print(sys.executable)"
 
 | 配置文件                                                                                                | 内容                                                                 |
 | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| [任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)                                    | 数据采样频率、验证比例、图像预处理；数据路径在每次运行时覆盖         |
+| [任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)                                    | 动作空间、两种动作空间的观测和动作契约、数据采样频率、验证比例、图像预处理；数据路径在每次运行时覆盖 |
 | [正式训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_workspace.yaml)     | 默认每批64个样本、4个读取进程、600轮、每轮完整训练                   |
 | [短训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_smoke_workspace.yaml) | 继承正式配置，每批2个样本、0个读取进程、每轮2批、共2轮，用于检查流程 |
 
@@ -53,7 +60,7 @@ python -c "import sys; print(sys.executable)"
 
 当前 `n_obs_steps=2`、`horizon=16`、`n_action_steps=8`：两步观测相隔0.1秒，16步完整标签首尾跨度1.5秒，8步执行段计划时刻为 `t0+[0,0.1,…,0.7]` 秒，最后一步覆盖至 `t0+0.8` 秒。批大小、学习率和总目标600轮保持原设置；验证损失每5轮一次，离线动作评估每50轮一次。
 
-**输出目录默认按启动日期和时间自动创建**，格式为 `data/outputs/年.月.日/时.分.秒_tianji_rail/`，例如 `data/outputs/2026.10.14/18.30.00_tianji_rail/`。新训练命令不需要传 `hydra.run.dir`；需要自定义目录时再用该参数覆盖。目录保存 `checkpoints/latest.ckpt`（模型及训练状态）、`logs.json.txt`（日志）和 `.hydra/`（配置记录），路径均相对于项目目录。恢复训练必须显式指定原输出目录。
+**输出目录默认按启动日期、时间和动作空间自动创建**，格式为 `data/outputs/年.月.日/时.分.秒_tianji_rail_<动作空间>/`，例如末端版 `data/outputs/2026.10.19/18.30.00_tianji_rail_eef/`、关节版 `data/outputs/2026.10.19/18.30.00_tianji_rail_joint/`。此前的目录名为 `_tianji_rail`，均为末端版。新训练命令不需要传 `hydra.run.dir`；需要自定义目录时再用该参数覆盖。目录保存 `checkpoints/latest.ckpt`（模型及训练状态）、`logs.json.txt`（日志）和 `.hydra/`（配置记录），路径均相对于项目目录。恢复训练必须显式指定原输出目录。
 
 ### 短训练
 
@@ -63,6 +70,8 @@ python -c "import sys; print(sys.executable)"
 python train.py --config-name=train_diffusion_transformer_tianji_rail_smoke_workspace \
   "task.dataset.dataset_path=/path/to/dataset.zarr"
 ```
+
+关节版数据同样使用短训练配置，在命令中加 `task.action_space=joint`，见下方“选择动作空间”。
 
 ### 正式训练
 
@@ -77,6 +86,7 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 
 | 配置参数                                         | 当前值               | 何时修改                                                                                |
 | ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
+| `task.action_space`                            | `eef`              | 关节版数据设为`joint`，须与Zarr的`action_space` 一致                                 |
 | `task.sample_hz`                               | `30`               | 数据采样频率改变时同步修改，须与Zarr的`target_fps` 一致                               |
 | `task.dataset.val_ratio`                       | `0.05`             | 调整按独立演示来源留出的验证比例；单条演示设为`0`                                     |
 | `dataloader.batch_size`                        | `64`               | 按显存容量调整每批样本数，显存不足时减小                                                |
@@ -89,30 +99,34 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 
 从头训练使用 `training.resume=false`（默认值），输出目录按启动时间自动命名。更换数据频率时新建实验，重新训练对应频率的模型；同一实验中断后的继续训练见下节。
 
-### 关节版训练
+### 选择动作空间
 
-Zarr 的 `action_space` 为 `joint` 时，使用关节版配置；末端版配置会拒绝这类数据。关节版观测为三路RGB、14维机械臂关节和40维手关节，动作为54维绝对关节目标（左臂7、右臂7、左手20、右手20，弧度）；其余训练参数继承正式训练配置，任务设置见[关节版任务配置](../../diffusion_policy/config/task/tianji_rail_joint_image.yaml)。离线评估报告各臂和各手的关节平均绝对误差，单位为度。真机部署目前只支持末端版模型。
+末端版和关节版**不再有单独的配置文件**，统一使用上面的正式训练配置或短训练配置，用 `task.action_space` 选择动作空间。该参数决定观测字段、动作维度和输出目录后缀（取值见第2节的契约表）；其余参数相同，同样可在命令行覆盖。关节版数据的命令（数据路径为本机关节版30 Hz数据示例）：
 
 ```bash
-python train.py --config-name=train_diffusion_transformer_tianji_rail_joint_smoke_workspace \
-  "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place3_joint_30hz.zarr"
-python train.py --config-name=train_diffusion_transformer_tianji_rail_joint_workspace \
+python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace \
+  task.action_space=joint \
   "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place3_joint_30hz.zarr"
 ```
 
-输出目录默认为 `data/outputs/年.月.日/时.分.秒_tianji_rail_joint/`；恢复训练时同样使用关节版配置名。
+短训练检查把配置名换成 `train_diffusion_transformer_tianji_rail_smoke_workspace`，其余参数不变。末端版数据省略 `task.action_space`，使用默认值 `eef`。参数与数据不一致时启动即报错，例如关节版数据未加 `task.action_space=joint` 时，提示 `Dataset action_space=joint does not match configured action_space=eef`。
+
+`task.action_space` 和解析后的观测与动作契约写入 checkpoint，离线评估和真机部署据此自动选择对应流程，不需要再次指定。
 
 ### 恢复训练
 
-恢复训练时，沿用原实验的数据、配置和输出目录，加 `training.resume=true`。将下面的数据路径和 `run_dir` 换成原实验的实际值；其他参数若曾修改，也要保持原设置。先确认模型文件存在再启动，不能让恢复训练另建时间目录：
+恢复训练时，沿用原实验的数据、配置和输出目录，加 `training.resume=true`。将下面的数据路径和 `run_dir` 换成原实验的实际值；其他参数若曾修改，也要保持原设置，**关节版必须同样加 `task.action_space=joint`**。先确认模型文件存在再启动，不能让恢复训练另建时间目录：
 
 ```bash
-run_dir=data/outputs/2026.10.16/18.30.00_tianji_rail
+run_dir=data/outputs/2026.10.19/18.30.00_tianji_rail_joint
 test -f "$run_dir/checkpoints/latest.ckpt" && \
 python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace \
+  task.action_space=joint \
   "task.dataset.dataset_path=/path/to/dataset.zarr" \
   "hydra.run.dir=$run_dir" training.resume=true
 ```
+
+末端版实验去掉 `task.action_space=joint` 一行。
 
 `training.num_epochs` 是总目标轮数：默认600轮，若 checkpoint 已完成100轮，则继续训练500轮。
 
@@ -144,30 +158,34 @@ python eval.py \
   --seed 42 --no-clip-sample
 ```
 
-采样截断只覆盖本次离线评估，不改变checkpoint或归一化参数；未指定时沿用checkpoint设置。报告为 `eval_log.json`、`offline_report.json`、`eval_settings.json`；位置误差用毫米，旋转与手关节误差用度。没有验证窗口时记录跳过原因。离线误差不代表实机成功率。
+采样截断只覆盖本次离线评估，不改变checkpoint或归一化参数；未指定时沿用checkpoint设置。报告为 `eval_log.json`、`offline_report.json`、`eval_settings.json`；末端版报告位置误差（毫米）和旋转误差（度），关节版报告每臂关节平均绝对误差（度），两者都报告手关节误差（度）。没有验证窗口时记录跳过原因。离线误差不代表实机成功率。
 
 ## 5．真机评估
 
 当前文件结构、三种运行模式与闭环流程见[真机评估结构与流程图](real_eval_structure/README.md)。
 
-将 `run_dir` 换成实际训练输出目录。首先检查模型重载及 batch=1 推理，不连接任何设备：
+**末端版和关节版使用同一个入口和同一个[部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)**。入口从 checkpoint 读取动作空间（`task.action_space`，旧 checkpoint 没有该字段时按末端版处理），自动选择对应的观测、动作校验和机械臂执行器，命令中不需要指定。需要改动的部署参数用 `--set` 在命令行覆盖，见下方“部署参数”。
+
+将 `run_dir` 换成实际训练输出目录。首先检查模型重载及 batch=1 推理，不连接任何设备。当前训练配置为30 Hz，部署配置默认10 Hz，因此30 Hz模型的每条部署命令都要加 `--set policy_hz=30`；频率不一致时入口直接报错：
 
 ```bash
-run_dir=data/outputs/2026.10.16/18.30.00_tianji_rail
+run_dir=data/outputs/2026.10.19/18.30.00_tianji_rail_joint
 python eval_tianji_rail.py \
   --checkpoint "$run_dir/checkpoints/latest.ckpt" \
+  --set policy_hz=30 --set replanning_steps=2 \
   --check-only --output data/real_eval/check-001
 ```
 
-该检查使用模拟图像，不能作为实时延迟或任务成功率。正式评估应使用正式训练完成后选定的模型。
+该检查使用模拟图像，不能作为实时延迟或任务成功率。`preflight.json` 的 `deployment.action_space` 记录识别出的动作空间，`config_overrides` 记录本次的 `--set` 参数。正式评估应使用正式训练完成后选定的模型。
 
-部署入口将 PyTorch 和 BLAS 的 CPU 计算线程限制为1，并在设备连接前启动、预热独立的模型推理进程，减少推理与设备控制、反馈解码及记录之间的线程竞争。`timing.json` 分别记录观测读取、预处理、输入传输和推理／输出回传耗时，事件中另存推理进程的传输与计算时刻。默认异步模式下，动作保持观测锚点的原计划时刻，过期动作不会平移后补发；当前8步、10 Hz时最后目标为观测后700 ms，提交还需预留 `submit_margin_s=10 ms`，覆盖最迟到800 ms。`replanning_steps=1` 表示新锚点至少前进100 ms才重新推理，实际频率受计算耗时和观测可用性限制。
+部署入口将 PyTorch 和 BLAS 的 CPU 计算线程限制为1，并在设备连接前启动、预热独立的模型推理进程，减少推理与设备控制、反馈解码及记录之间的线程竞争。`timing.json` 分别记录观测读取、预处理、输入传输和推理／输出回传耗时，事件中另存推理进程的传输与计算时刻。默认异步模式下，动作保持观测锚点的原计划时刻，过期动作不会平移后补发；以8步为例，10 Hz时最后目标为观测后700 ms，覆盖最迟到800 ms；30 Hz时分别为233 ms和267 ms；提交还需预留 `submit_margin_s=10 ms`。重规划的最短间隔为 `replanning_steps/policy_hz` 秒：10 Hz配 `replanning_steps=1`、30 Hz配 `replanning_steps=2` 分别为100 ms和67 ms，实际频率受计算耗时和观测可用性限制。
 
 设备已连接、其他控制程序已退出时，省略 `--check-only` 进入影子模式，默认不配置控制参数、不使能或下发动作：
 
 ```bash
 python eval_tianji_rail.py \
   --checkpoint "$run_dir/checkpoints/latest.ckpt" \
+  --set policy_hz=30 --set replanning_steps=2 \
   --output data/real_eval/shadow-001
 ```
 
@@ -181,10 +199,42 @@ python eval_tianji_rail.py \
 ```bash
 python eval_tianji_rail.py \
   --checkpoint "$run_dir/checkpoints/latest.ckpt" \
+  --set policy_hz=30 \
   --inference-mode sync --output data/real_eval/shadow-sync-001
 ```
 
-[部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)引用项目内机械臂、手和相机配置（[设备约定](device-runtime.md)），并为时间阈值、速度、试验超时等参数提供注释。模型形状、RGB 预处理、EMA 和归一化器以 checkpoint 为准；当前默认10 Hz、`n_latency_steps=0`、52维绝对EEF动作。三路RGB相机仍采30 Hz，状态历史100 Hz，双臂控制200 Hz，双手控制各120 Hz。历史30 Hz模型仅能配合显式设为30 Hz的独立部署配置使用；缺少频率字段的旧导轨checkpoint按30 Hz处理，不能直接用于默认10 Hz配置。
+[部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)引用项目内机械臂、手和相机配置（[设备约定](device-runtime.md)），并为时间阈值、速度、试验超时等参数提供注释。模型形状、动作空间、RGB 预处理、EMA 和归一化器以 checkpoint 为准；部署配置默认10 Hz、`n_latency_steps=0`。三路RGB相机仍采30 Hz，状态历史100 Hz，双臂控制200 Hz，双手控制各120 Hz。缺少频率字段的旧导轨checkpoint按30 Hz处理，同样加 `--set policy_hz=30`。
+
+### 部署参数
+
+部署只保留一个配置文件，**原先的宽松配置 `tianji_rail_real_eval_loose.yaml` 已删除**。配置文件存放长期使用的默认值；只对某次运行修改的参数，在命令行用 `--set 参数名=值` 覆盖，规则如下：
+
+- 可重复使用，多个参数按出现顺序依次生效；只覆盖本次运行，不改动配置文件。
+- 只能修改配置文件中已有的参数，拼错参数名会报 `Unknown deployment config key`，不会静默忽略。
+- 值按 YAML 解析：`policy_hz=30` 为整数，`inference_mode=sync` 为字符串，`workspace.left.min=[0.1,-0.3,0.2]` 为列表。嵌套参数用点号连接；含空格或方括号的值整体加引号。
+- 覆盖后仍执行配置校验（频率只能为10或30、时间和限值须为正数等），实际生效值和 `--set` 原文分别记入 `session.json`（或 `preflight.json`）的 `deployment` 和 `config_overrides`。
+
+`--device`、`--inference-mode` 是常用参数的快捷写法，与 `--set device=...`、`--set inference_mode=...` 等价。常用覆盖：
+
+| 场景                       | 命令行参数                                                       |
+| -------------------------- | ---------------------------------------------------------------- |
+| 30 Hz模型（替代原宽松配置） | `--set policy_hz=30 --set replanning_steps=2`                |
+| 收紧末端版跳变限制         | `--set max_position_jump_m=0.05 --set max_rotation_jump_rad=0.2` |
+| 收紧关节版跳变和速度限制   | `--set max_arm_joint_jump_rad=0.3 --set max_arm_joint_speed_rad_s=1.0` |
+| 延长单次试验时间           | `--set trial_timeout_s=60`                                     |
+| 填写工作空间（末端版）     | `--set "workspace.left.min=[0.1,-0.3,0.2]" --set "workspace.left.max=[0.6,0.3,0.7]"` |
+
+各参数的含义和单位见部署配置中的注释。末端版只检查 `max_position_*`、`max_rotation_*` 和 `workspace`；关节版只检查 `max_arm_joint_*`；`max_hand_*` 两者都检查。
+
+### 关节版部署
+
+关节版的部署命令与末端版完全相同，只是换成关节版 checkpoint。与末端版的区别：
+
+- **观测**：实时采集每臂7个实测关节，作为 `robot_joint` 输入；末端位姿仍会记录，但不进入关节版模型。
+- **动作校验**：每批预测在提交前整段检查，任一步不通过即整段拒绝并暂停。检查项为：机械臂关节限位及腕部耦合限位；每个关节相对接合姿态或上一目标的跳变不超过 `max_arm_joint_jump_rad`（默认0.6 rad）；相邻目标的关节速度不超过 `max_arm_joint_speed_rad_s`（默认2.0 rad/s）。两项默认值依据演示数据设定：指令关节领先实测关节最多0.50 rad，最大关节速度0.70 rad/s。末端工作空间不检查。
+- **执行**：双臂仍以200 Hz在笛卡尔阻抗模式下运行，但直接下发7个关节目标，不经过逆运动学。每个控制周期按机械臂配置的 `velocity_ratio`／`acceleration_ratio` 限制关节速度和加速度，并保持在关节与腕部耦合限位内。
+- **速度上限**：当前[机械臂配置](../../diffusion_policy/config/tianji_teleop.yaml)两项比例均为15%，最快关节约0.47 rad/s，低于演示中的0.70 rad/s。因此快速段的实际运动会滞后于模型目标；需要更快时调整该配置中各臂的 `velocity_ratio`／`acceleration_ratio`，并重新完成停止和短时执行验收。
+- **暂不支持**：`--trace` 决策记录（入口会直接报错）、`eval_tianji_rail_recorded_obs.py` 等基于记录观测的离线回放工具，以及批量因子回放脚本，这些目前只支持末端版。
 
 现场填写左右臂基座系下法兰的 `workspace.min/max`，完成影子观测、控制周期、停止和短时执行验收后，加入 `--motion`。在终端输入 `s` 后按 Enter 才会开始每次试验；`p` 暂停并记接管，`y` 记成功，`n` 记失败，`q` 退出。影子模式自动记录一条限时试验；运动模式重启后仍须手动开始，不自动回位或恢复旧动作。Ctrl+C 同样进入退出清理。
 

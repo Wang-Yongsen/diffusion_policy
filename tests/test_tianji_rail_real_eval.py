@@ -630,6 +630,8 @@ class RealEvaluationTests(unittest.TestCase):
         self.assertIsNone(env.latest_anchor_ns())
         for key, history in histories().items():
             env.histories[key].extend(history)
+        for side in ("left", "right"):
+            env.histories[f"arm_joints/{side}"].extend((stamp, np.zeros(7)) for stamp, _ in histories()[f"arms/{side}"])
         _, anchor, _ = align_observation(histories(), 2, config(), now_ns=1_050_000_000)
         self.assertEqual(env.latest_anchor_ns(), anchor)
         # A frame newer than every measured state cannot be the anchor yet.

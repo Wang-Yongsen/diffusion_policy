@@ -18,6 +18,7 @@ from threadpoolctl import threadpool_info, threadpool_limits
 
 from diffusion_policy.third_party import bimanual_teleop
 
+from diffusion_policy.dataset.tianji_rail_image_dataset import ACTION_DIMS
 from diffusion_policy.env_runner.tianji_rail_real_runner import TianjiRailRealRunner, write_json
 from diffusion_policy.real_world.policy_inference_process import PolicyInferenceProcess
 from diffusion_policy.real_world.tianji_policy_runtime import INFERENCE_MODES
@@ -27,6 +28,11 @@ from diffusion_policy.real_world.tianji_rail_env import (
 )
 
 
+def checkpoint_action_space(cfg):
+    """Checkpoints trained before joint support have no action_space and are EEF."""
+    return cfg.task.dataset.get("action_space", "eef")
+
+
 def load_policy(checkpoint, device):
     # Local checkpoints contain the trusted training config and normalizer state.
     payload = torch.load(checkpoint, map_location="cpu", pickle_module=dill, weights_only=False)
@@ -34,10 +40,15 @@ def load_policy(checkpoint, device):
     OmegaConf.register_new_resolver("eval", eval, replace=True)
     torch.manual_seed(int(cfg.training.seed))
     np.random.seed(int(cfg.training.seed))
-    expected = {"camera_0": (3,), "camera_1": (3,), "camera_2": (3,),
-                "robot_eef_pose": (12,), "hand_joint": (40,)}
-    if set(cfg.task.shape_meta.obs) != set(expected) or list(cfg.task.shape_meta.action.shape) != [52]:
-        raise ValueError("Checkpoint must use three RGB + 12-D flange + 40-D hand / 52-D EEF actions")
+    action_space = checkpoint_action_space(cfg)
+    if action_space not in ACTION_DIMS:
+        raise ValueError(f"Unsupported checkpoint action_space={action_space}")
+    arm_obs = {"eef": ("robot_eef_pose", 12), "joint": ("robot_joint", 14)}[action_space]
+    expected = {"camera_0": (3,), "camera_1": (3,), "camera_2": (3,), arm_obs[0]: (arm_obs[1],), "hand_joint": (40,)}
+    dim = ACTION_DIMS[action_space]
+    if set(cfg.task.shape_meta.obs) != set(expected) or list(cfg.task.shape_meta.action.shape) != [dim]:
+        raise ValueError(f"action_space={action_space} checkpoint must use three RGB + {arm_obs[1]}-D "
+                         f"{arm_obs[0]} + 40-D hand_joint / {dim}-D actions")
     for key, prefix in expected.items():
         if tuple(cfg.task.shape_meta.obs[key].shape)[:len(prefix)] != prefix:
             raise ValueError(f"Checkpoint shape mismatch: {key}")
@@ -65,9 +76,13 @@ def validate_policy_frequency(cfg, policy_hz):
 
 
 def check_inference(policy, cfg, iterations=3):
-    obs = {f"camera_{i}": np.zeros((policy.n_obs_steps, 480, 640, 3), np.uint8) for i in range(3)}
-    obs.update(robot_eef_pose=np.zeros((policy.n_obs_steps, 12), np.float32),
-               hand_joint=np.zeros((policy.n_obs_steps, 40), np.float32))
+    obs = {}
+    for key, spec in cfg.task.shape_meta.obs.items():
+        if spec.get("type", "low_dim") == "rgb":
+            obs[key] = np.zeros((policy.n_obs_steps, 480, 640, 3), np.uint8)
+        else:
+            obs[key] = np.zeros((policy.n_obs_steps, *spec.shape), np.float32)
+    dim = ACTION_DIMS[checkpoint_action_space(cfg)]
     prepared = preprocess_observation(obs, cfg.task.shape_meta, cfg.task.dataset)
     tensor_obs = {key: torch.from_numpy(value).unsqueeze(0).to(policy.device) for key, value in prepared.items()}
     durations = []
@@ -75,7 +90,7 @@ def check_inference(policy, cfg, iterations=3):
         for i in range(iterations + 1):
             start = time.monotonic_ns()
             result = policy.predict_action(tensor_obs)["action"].detach().cpu().numpy()
-            if result.shape != (1, policy.n_action_steps, 52) or not np.isfinite(result).all():
+            if result.shape != (1, policy.n_action_steps, dim) or not np.isfinite(result).all():
                 raise ValueError("Checkpoint prediction shape/finite check failed")
             if i:
                 durations.append((time.monotonic_ns() - start) / 1e6)
@@ -92,6 +107,8 @@ def main(argv=None):
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--batch-seed", type=int, help="正式第0次预测前重置采样种子；预热不占批次噪声")
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
+    parser.add_argument("--set", dest="overrides", action="append", default=[], metavar="KEY=VALUE",
+                        help="覆盖部署配置中已有的参数，可重复；值按 YAML 解析，嵌套参数用点号，如 workspace.left.min=[0,0,0]")
     parser.add_argument("--device", help="覆盖配置中的模型设备，例如 cpu 或 cuda:0")
     parser.add_argument("--inference-mode", choices=INFERENCE_MODES,
                         help="覆盖配置中的推理模式：async 推理与执行并行；sync 推理期间保持，动作块执行完再观测")
@@ -104,7 +121,7 @@ def main(argv=None):
                         help="把每次决策的原始输入、伺服命令和反馈留在内存，运动结束后再落盘")
     parser.add_argument("--trace-capacity", type=int, default=48, help="完整记录最多保存多少次决策")
     args = parser.parse_args(argv)
-    config = load_deployment_config(args.config)
+    config = load_deployment_config(args.config, args.overrides)
     device = args.device or config["device"]
     config["inference_mode"] = args.inference_mode or config["inference_mode"]
     output = args.output or Path(config["output_dir"]) / time.strftime("%Y%m%d-%H%M%S")
@@ -117,6 +134,9 @@ def main(argv=None):
     torch.set_num_threads(1)
     policy, cfg, state_key = load_policy(args.checkpoint, device)
     validate_policy_frequency(cfg, config["policy_hz"])
+    config["action_space"] = checkpoint_action_space(cfg)
+    if config["action_space"] == "joint" and args.trace:
+        parser.error("--trace 的决策记录只支持末端版 checkpoint")
     if config["inference_mode"] == "async" and config["replanning_steps"] >= policy.n_action_steps:
         raise ValueError("replanning_steps must be smaller than checkpoint n_action_steps")
     if config["history_s"] <= (policy.n_obs_steps - 1) / config["policy_hz"] + config["max_state_gap_s"]:
@@ -133,6 +153,7 @@ def main(argv=None):
         "versions": {name: version(name) for name in ("torch", "torchvision", "numpy", "scipy",
              "zarr", "numcodecs", "quadprog", "hydra-core", "diffusers", "huggingface-hub",
              "robomimic", "dill", "pyrealsense2", "wuji-sdk")}}
+    metadata["config_overrides"] = list(args.overrides)
     metadata["batch_seed"] = args.batch_seed
     if args.batch_seed is not None:
         metadata["seed"] = int(args.batch_seed)

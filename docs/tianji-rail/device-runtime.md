@@ -9,7 +9,7 @@
 | [天机配置](../../diffusion_policy/config/tianji_teleop.yaml) | 控制器 IP、双臂控制参数、关节及伺服限制 |
 | [无极配置](../../diffusion_policy/config/wuji_teleop.yaml) | 双手地址、SDK 用户名、控制／反馈频率、MIT 参数 |
 | [相机配置](../../diffusion_policy/config/recording.yaml) | 三路 D436 序列号及顺序：`camera_0` 主视角、`camera_1` 机器人左臂、`camera_2` 机器人右臂；策略只启用 RGB |
-| [部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml) | 相对设备配置路径、观测时效、工作空间、速度及试验设置 |
+| [部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml) | 相对设备配置路径、观测时效、工作空间、速度及试验设置；末端版与关节版共用，单次修改用入口的 `--set` |
 
 当前 IP、用户名和相机序列号来自原设备配置，不表示适用于另一台机器。相机顺序与旋转须和训练数据的采集约定一致：左臂相机倒装，`camera_1` 的 RGB 在读取后、缩放前旋转 180°，并在相机元数据中记为 `image_rotation_deg`；其余两路不旋转。部署配置中的相对文件路径按本项目根目录解析；默认设备配置、SDK 原生库及模型按包位置解析，移动项目后重新创建环境即可。主机须为 Linux x86_64，并具有环境所要求的 GPU 驱动及设备连接条件。
 

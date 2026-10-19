@@ -20,6 +20,7 @@ from diffusion_policy.third_party.bimanual_teleop.recording.camera import Camera
 from diffusion_policy.third_party.bimanual_teleop.recording.config import load_config as load_camera_config
 from diffusion_policy.third_party.bimanual_teleop.types import ControlProfile
 
+from .tianji_joint_executor import TianjiJointExecutor, model_joint_limits
 from .tianji_policy_runtime import INFERENCE_MODES, SIDES, TianjiPolicyRuntime, future_actions, retimed_actions
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -29,9 +30,25 @@ class ObservationNotReady(RuntimeError):
     pass
 
 
-def load_deployment_config(path):
+def apply_overrides(config, overrides):
+    """Apply KEY=VALUE items (YAML values, dotted keys for nesting); only existing keys may be set."""
+    for item in overrides:
+        key, separator, text = item.partition("=")
+        if not separator or not key:
+            raise ValueError(f"Override must be KEY=VALUE: {item}")
+        *parents, leaf = key.split(".")
+        node = config
+        for part in parents:
+            node = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(node, dict) or leaf not in node:
+            raise ValueError(f"Unknown deployment config key: {key}")
+        node[leaf] = yaml.safe_load(text)
+    return config
+
+
+def load_deployment_config(path, overrides=()):
     with Path(path).open() as file:
-        config = yaml.safe_load(file)
+        config = apply_overrides(yaml.safe_load(file), overrides)
     for key, value in config.items():
         if key.endswith(("_s", "_hz", "_rad", "_m", "_m_s", "_rad_s")):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
@@ -114,7 +131,10 @@ def align_observation(histories, n_obs_steps, config, *, now_ns):
         camera_stamps.append(selected)
     if np.any(np.ptp(np.asarray(camera_stamps), axis=0) > config["max_camera_span_s"] * 1e9):
         raise ObservationNotReady("Three-camera timestamp span exceeds budget")
-    for kind, output in (("arms", "robot_eef_pose"), ("hands", "hand_joint")):
+    outputs = [("arms", "robot_eef_pose"), ("hands", "hand_joint")]
+    if "arm_joints/left" in histories:
+        outputs.append(("arm_joints", "robot_joint"))
+    for kind, output in outputs:
         values = []
         for side in SIDES:
             key = f"{kind}/{side}"
@@ -132,8 +152,8 @@ def preprocess_observation(obs, shape_meta, dataset_config):
     import cv2
     interpolation = {"area": cv2.INTER_AREA, "bilinear": cv2.INTER_LINEAR, "nearest": cv2.INTER_NEAREST}
     result = {}
-    if set(obs) != set(shape_meta["obs"]):
-        raise ValueError("Checkpoint observation keys differ from the real rig")
+    if not set(shape_meta["obs"]) <= set(obs):
+        raise ValueError("Checkpoint observation keys are not provided by the real rig")
     for key, spec in shape_meta["obs"].items():
         values, shape = np.asarray(obs[key]), tuple(spec["shape"])
         if spec.get("type", "low_dim") == "rgb":
@@ -165,7 +185,8 @@ class TianjiRailEnv:
         self._shadow_chunk_end_ns = 0
         self._hand_hold = None
         self.histories = {key: deque() for key in ("camera_0", "camera_1", "camera_2",
-                         "arms/left", "arms/right", "hands/left", "hands/right")}
+                         "arms/left", "arms/right", "arm_joints/left", "arm_joints/right",
+                         "hands/left", "hands/right")}
         arm_config = load_arm_config(config["arm_config"])
         hand_config = load_hand_config(config["hand_config"])
         self.arm_profile = ControlProfile(**arm_config["profile"])
@@ -174,14 +195,21 @@ class TianjiRailEnv:
         if self.kinematics.model.digest != config["expected_model_sha256"]:
             raise ValueError("Loaded FK model differs from deployment expected_model_sha256")
         self.driver = TianjiDriver(arm_config["controller_ip"])
-        self.arm = TianjiCartesianExecutor(self.driver, self.kinematics)
+        self.action_space = config.get("action_space", "eef")
+        joint_limits = None
+        if self.action_space == "joint":
+            self.arm = TianjiJointExecutor(self.driver)
+            joint_limits = {side: model_joint_limits(self.kinematics.model, side) for side in SIDES}
+        else:
+            self.arm = TianjiCartesianExecutor(self.driver, self.kinematics)
         self.session = WujiSdkSession(user_name=sdk_user_name(hand_config))
         self.hands = {side: WujiHandDriver(side, hand_config["devices"][side]["hand"],
                      feedback_hz=hand_config.get("feedback_hz", 200), timeout_s=config["max_state_age_s"])
                      for side in SIDES}
         camera_config = replace(load_camera_config(config["camera_config"]), main_depth=False)
         self.cameras = CameraRig(camera_config)
-        self.runtime = TianjiPolicyRuntime(self.arm, self.hands, config, self.health_problem, self.emit)
+        self.runtime = TianjiPolicyRuntime(self.arm, self.hands, config, self.health_problem, self.emit,
+                                           joint_limits=joint_limits)
 
     def enable_trace(self, trace):
         if self.trace is not None:
@@ -249,6 +277,7 @@ class TianjiRailEnv:
                             pose = self.kinematics.fk(side, tuple(q))
                             value = np.r_[pose.position_m, Rotation.from_quat(pose.orientation_xyzw).as_rotvec()]
                             self._append(f"arms/{side}", sample.header.received_monotonic_ns, value)
+                            self._append(f"arm_joints/{side}", sample.header.received_monotonic_ns, q)
                     for side, hand in self.hands.items():
                         sample = hand.get_latest()
                         if sample is not None and sample.header.valid:
@@ -337,7 +366,8 @@ class TianjiRailEnv:
             raise ValueError("Fill both measured workspaces before motion")
         obs, _, _ = self.get_obs()
         self.stop_hand_hold()
-        self.runtime.seed(np.r_[obs["robot_eef_pose"][-1], obs["hand_joint"][-1]])
+        arm_key = "robot_joint" if self.action_space == "joint" else "robot_eef_pose"
+        self.runtime.seed(np.r_[obs[arm_key][-1], obs["hand_joint"][-1]])
         try:
             for hand in self.hands.values():
                 if hand.profile is None:
@@ -347,9 +377,13 @@ class TianjiRailEnv:
                 self.arm.configure(self.arm_profile)
             self.arm.engage()
             # Use the exact arm engagement reference, not a previous aligned camera pose.
-            seed = np.concatenate([np.r_[self.arm.engagement_poses[side].position_m,
-                       Rotation.from_quat(self.arm.engagement_poses[side].orientation_xyzw).as_rotvec()]
-                       for side in SIDES] + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
+            if self.action_space == "joint":
+                arms = [np.asarray(self.arm.engagement_joints[side]) for side in SIDES]
+            else:
+                arms = [np.r_[self.arm.engagement_poses[side].position_m,
+                              Rotation.from_quat(self.arm.engagement_poses[side].orientation_xyzw).as_rotvec()]
+                        for side in SIDES]
+            seed = np.concatenate(arms + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
             self.runtime.seed(seed, arm_ready=True)
         except Exception as error:
             self.stop_hand_hold(raise_error=False)

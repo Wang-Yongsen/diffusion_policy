@@ -425,10 +425,13 @@ class TianjiRailRealRunner:
             return {}
         index = self._snapshot_index
         name = f"obs_{index:02d}" if index < 3 else f"obs_recent_{index % 3:02d}"
-        return {"observation_file": f"{name}.npz", "prediction_index": index,
-                "input_robot_eef_pose": np.asarray(obs["robot_eef_pose"], dtype=np.float32),
-                "input_hand_joint": np.asarray(obs["hand_joint"], dtype=np.float32),
-                "measured": self.env.latest_measured()}
+        record = {"observation_file": f"{name}.npz", "prediction_index": index,
+                  "input_robot_eef_pose": np.asarray(obs["robot_eef_pose"], dtype=np.float32),
+                  "input_hand_joint": np.asarray(obs["hand_joint"], dtype=np.float32),
+                  "measured": self.env.latest_measured()}
+        if "robot_joint" in obs:
+            record["input_robot_joint"] = np.asarray(obs["robot_joint"], dtype=np.float32)
+        return record
 
     def _save_observation_window(self, obs, anchor):
         if not self.record_observations or self._trial is None:
@@ -436,9 +439,10 @@ class TianjiRailRealRunner:
         index = self._snapshot_index
         self._snapshot_index += 1
         name = f"obs_{index:02d}" if index < 3 else f"obs_recent_{index % 3:02d}"
+        extra = {"robot_joint": obs["robot_joint"]} if "robot_joint" in obs else {}
         self._trial.snapshot(name, anchor_ns=anchor, prediction_index=index,
                              camera_0=obs["camera_0"], camera_1=obs["camera_1"], camera_2=obs["camera_2"],
-                             robot_eef_pose=obs["robot_eef_pose"], hand_joint=obs["hand_joint"])
+                             robot_eef_pose=obs["robot_eef_pose"], hand_joint=obs["hand_joint"], **extra)
 
     def run(self):
         thread = threading.Thread(target=self._infer, name="policy-inference", daemon=True)

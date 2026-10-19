@@ -174,4 +174,4 @@ checkpoint:
 hydra:
   run:
     # 新实验使用独立目录；恢复时明确指定原目录。
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_tianji_rail
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_tianji_rail_${task.action_space}

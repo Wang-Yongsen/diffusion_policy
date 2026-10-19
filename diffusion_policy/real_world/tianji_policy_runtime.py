@@ -1,4 +1,4 @@
-"""Absolute 52-D targets, monotonic scheduling and independent device loops."""
+"""Absolute EEF (52-D) or joint (54-D) targets, monotonic scheduling and independent device loops."""
 
 import threading
 import time
@@ -6,33 +6,43 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from diffusion_policy.dataset.tianji_rail_image_dataset import ACTION_DIMS
+from diffusion_policy.real_world.tianji_joint_executor import JointArmTarget, joints_within_limits
 from diffusion_policy.third_party.bimanual_teleop.types import DeviceCommand, JointTarget, Pose, RobotTarget
 from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import JOINT_LIMITS_RAD, JOINT_NAMES
 
 SIDES = ("left", "right")
 INFERENCE_MODES = ("async", "sync")
+# Arm values per side before the two 20-D hands: flange xyz+rotvec, or seven joints.
+ARM_WIDTHS = {"eef": 6, "joint": 7}
 # Equals the Tianji driver watchdog, which bounds every accepted target anyway;
 # arm IK plus submission has been measured up to 56 ms under parent-process load.
 HOLD_TTL_NS = 80_000_000
 
 
-def split_action(action):
+def split_action(action, action_space="eef"):
+    """Arm goals are flange Poses (eef) or seven-joint tuples (joint); hands are joint targets."""
     action = np.asarray(action, dtype=np.float64)
-    if action.shape != (52,) or not np.isfinite(action).all():
-        raise ValueError("Require finite absolute 52-D action")
-    poses, hands = {}, {}
+    width = ARM_WIDTHS[action_space]
+    if action.shape != (ACTION_DIMS[action_space],) or not np.isfinite(action).all():
+        raise ValueError(f"Require finite absolute {ACTION_DIMS[action_space]}-D action")
+    arms, hands = {}, {}
     for i, side in enumerate(SIDES):
-        xyz, rotvec = action[i * 6:i * 6 + 3], action[i * 6 + 3:i * 6 + 6]
-        poses[side] = Pose(f"tianji_{side}_base", f"tianji_{side}_flange",
-                           tuple(xyz), tuple(Rotation.from_rotvec(rotvec).as_quat()))
-        hands[side] = JointTarget(JOINT_NAMES, tuple(action[12 + i * 20:32 + i * 20]))
-    return poses, hands
+        values = action[i * width:(i + 1) * width]
+        if action_space == "eef":
+            arms[side] = Pose(f"tianji_{side}_base", f"tianji_{side}_flange",
+                              tuple(values[:3]), tuple(Rotation.from_rotvec(values[3:]).as_quat()))
+        else:
+            arms[side] = tuple(values)
+        hands[side] = JointTarget(JOINT_NAMES, tuple(action[2 * width + i * 20:2 * width + 20 + i * 20]))
+    return arms, hands
 
 
 def _prediction_chunk(actions):
     actions = np.asarray(actions, dtype=np.float64)
-    if actions.ndim != 2 or actions.shape[1] != 52 or not len(actions) or not np.isfinite(actions).all():
-        raise ValueError("Require nonempty finite N x 52 predictions")
+    if (actions.ndim != 2 or actions.shape[1] not in ACTION_DIMS.values() or not len(actions)
+            or not np.isfinite(actions).all()):
+        raise ValueError("Require nonempty finite N x 52 (EEF) or N x 54 (joint) predictions")
     return actions
 
 
@@ -55,12 +65,28 @@ def retimed_actions(actions, now_ns, hz=30, margin_s=.01):
     return actions.copy(), stamps, 0
 
 
-def validate_actions(actions, times, reference, config):
+def validate_actions(actions, times, reference, config, joint_limits=None):
+    """joint_limits maps side to (lower, upper) radians; joint actions are checked against it when given."""
+    action_space = config.get("action_space", "eef")
+    if actions.shape[1] != ACTION_DIMS[action_space]:
+        raise ValueError(f"action_space={action_space} requires {ACTION_DIMS[action_space]}-D actions")
+    hand = 2 * ARM_WIDTHS[action_space]
     limits = np.tile(np.asarray(JOINT_LIMITS_RAD), (2, 1))
-    if np.any(actions[:, 12:] < limits[:, 0]) or np.any(actions[:, 12:] > limits[:, 1]):
+    if np.any(actions[:, hand:] < limits[:, 0]) or np.any(actions[:, hand:] > limits[:, 1]):
         raise ValueError("Hand target outside Hand2 joint limits")
     previous = np.vstack((reference, actions[:-1]))
+    dt = np.diff(times) / 1e9
     for i, side in enumerate(SIDES):
+        if action_space == "joint":
+            q = actions[:, 7 * i:7 * i + 7]
+            if joint_limits is not None and not joints_within_limits(q, *joint_limits[side]):
+                raise ValueError(f"{side} arm target outside M6 joint/wrist limits")
+            delta = np.abs(q - previous[:, 7 * i:7 * i + 7])
+            if np.any(delta > config["max_arm_joint_jump_rad"]):
+                raise ValueError(f"{side} arm target jumps too far")
+            if np.any(delta[1:] > dt[:, None] * config["max_arm_joint_speed_rad_s"]):
+                raise ValueError(f"{side} arm target changes too fast")
+            continue
         xyz = actions[:, 6 * i:6 * i + 3]
         workspace = config["workspace"][side]
         if workspace is None:
@@ -73,11 +99,10 @@ def validate_actions(actions, times, reference, config):
         angle = (current_r * previous_r.inv()).magnitude()
         if np.any(distance > config["max_position_jump_m"]) or np.any(angle > config["max_rotation_jump_rad"]):
             raise ValueError(f"{side} arm target jumps too far")
-        dt = np.diff(times) / 1e9
         if (np.any(distance[1:] > dt * config["max_position_speed_m_s"])
                 or np.any(angle[1:] > dt * config["max_rotation_speed_rad_s"])):
             raise ValueError(f"{side} arm target changes too fast")
-    hand_delta = np.abs(actions[:, 12:] - previous[:, 12:])
+    hand_delta = np.abs(actions[:, hand:] - previous[:, hand:])
     if np.any(hand_delta > config["max_hand_jump_rad"]):
         raise ValueError("Hand target jumps too far")
     if np.any(hand_delta[1:] > np.diff(times)[:, None] / 1e9 * config["max_hand_speed_rad_s"]):
@@ -85,16 +110,19 @@ def validate_actions(actions, times, reference, config):
 
 
 class TianjiPolicyRuntime:
-    def __init__(self, arm, hands, config, health, emit, *, clock_ns=time.monotonic_ns):
+    def __init__(self, arm, hands, config, health, emit, *, clock_ns=time.monotonic_ns, joint_limits=None):
         self.arm, self.hands, self.config = arm, hands, config
         self.health, self.emit, self.clock_ns = health, emit, clock_ns
+        self.action_space = config.get("action_space", "eef")
+        self.action_dim = ACTION_DIMS[self.action_space]
+        self.joint_limits = joint_limits
         self.active = False
         self.fault = None
         self._lock = threading.RLock()
         self._device_locks = {key: threading.RLock() for key in ("arm", *SIDES)}
         self._stop = threading.Event()
         self._threads = []
-        self._actions = np.empty((0, 52))
+        self._actions = np.empty((0, self.action_dim))
         self._times = np.empty(0, dtype=np.int64)
         self._last_action = None
         self.arm_ready = False
@@ -116,7 +144,7 @@ class TianjiPolicyRuntime:
 
     @property
     def reference_action(self):
-        """Last accepted 52-D target, including the engagement seed. Jump checks use this."""
+        """Last accepted full target, including the engagement seed. Jump checks use this."""
         with self._lock:
             if self._last_action is None:
                 return None
@@ -128,7 +156,7 @@ class TianjiPolicyRuntime:
             self.arm_ready = arm_ready
             self.fault = None
             self.active = False
-            self._actions = np.empty((0, 52))
+            self._actions = np.empty((0, self.action_dim))
             self._times = np.empty(0, dtype=np.int64)
             self._held_until_ns = self._last_nominal_ns = None
             self._generation += 1
@@ -147,7 +175,7 @@ class TianjiPolicyRuntime:
             else:
                 actions, times, dropped = future_actions(actions, anchor_ns, self.clock_ns(),
                     self.config["policy_hz"], self.config["submit_margin_s"])
-            validate_actions(actions, times, self._last_action, self.config)
+            validate_actions(actions, times, self._last_action, self.config, self.joint_limits)
             held_until = int(self._times[-1]) + round(1e9 / self.config["policy_hz"]) if self.active else None
             if held_until is not None and self.clock_ns() >= held_until:
                 raise RuntimeError("Previous policy coverage already expired")
@@ -168,7 +196,7 @@ class TianjiPolicyRuntime:
     def pause(self, reason, *, fault=False):
         with self._lock:
             self.active = False
-            self._actions = np.empty((0, 52))
+            self._actions = np.empty((0, self.action_dim))
             self._times = np.empty(0, dtype=np.int64)
             self._generation += 1
             self.arm_ready = False
@@ -202,7 +230,7 @@ class TianjiPolicyRuntime:
     def _complete_chunk(self, now):
         self._last_action = self._actions[-1].copy()
         self._last_nominal_ns = int(self._times[-1])
-        self._actions = np.empty((0, 52))
+        self._actions = np.empty((0, self.action_dim))
         self._times = np.empty(0, dtype=np.int64)
         self.active = False
         self.sync_waiting = True
@@ -243,7 +271,7 @@ class TianjiPolicyRuntime:
                     trace_step = int(np.searchsorted(self._times, now, side="right") - 1)
             if action is None:
                 return
-            poses, targets = split_action(action)
+            arm_goals, targets = split_action(action, self.action_space)
             command_id = f"{generation}-{side or kind}-{now}"
             if kind == "arm":
                 if not self.arm_ready or not self.arm.driver.engaged:
@@ -253,7 +281,8 @@ class TianjiPolicyRuntime:
                 with self._lock:
                     if generation != self._generation:
                         return
-                result = self.arm.submit(RobotTarget(command_id, poses, (), now, expiry,
+                target_type = JointArmTarget if self.action_space == "joint" else RobotTarget
+                result = self.arm.submit(target_type(command_id, arm_goals, (), now, expiry,
                                                      self.arm.driver.profile.profile_id))
                 receipts = {"arms": result}
             else:

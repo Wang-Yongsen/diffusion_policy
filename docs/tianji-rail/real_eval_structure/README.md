@@ -18,7 +18,8 @@ diffusion_policy/                          # 项目根目录
 │   │   └── recording.yaml                 # 三路实时相机的序列号与顺序
 │   ├── real_world/
 │   │   ├── tianji_rail_env.py             # 实时观测、设备生命周期、动作发布接口
-│   │   └── tianji_policy_runtime.py       # 目标队列、校验、独立控制及暂停
+│   │   ├── tianji_policy_runtime.py       # 目标队列、校验、独立控制及暂停
+│   │   └── tianji_joint_executor.py       # 关节版双臂执行器：限速、限位，不经逆运动学
 │   ├── env_runner/
 │   │   └── tianji_rail_real_runner.py     # 试验、推理线程、异步记录与汇总
 │   ├── policy/
@@ -40,11 +41,13 @@ diffusion_policy/                          # 项目根目录
 
 | 模块 | 主要职责 | 关键接口 |
 | --- | --- | --- |
-| [入口](../../../eval_tianji_rail.py) | 读取部署配置和checkpoint；检查52维契约；加载模型／EMA与保存的归一化器；执行模拟输入预检查；建立Env与Runner | `load_policy()`、`check_inference()`、`main()` |
+| [入口](../../../eval_tianji_rail.py) | 读取部署配置并应用 `--set` 覆盖；从checkpoint识别动作空间，检查末端版52维或关节版54维契约；加载模型／EMA与保存的归一化器；执行模拟输入预检查；建立Env与Runner | `load_policy()`、`check_inference()`、`main()` |
 | [Runner](../../../diffusion_policy/env_runner/tianji_rail_real_runner.py) | 组织每条试验，处理终端命令、超时和故障；在推理线程中读观测并调用Policy，按`inference_mode`选择异步或同步调度；异步保存结果 | `_begin()`、`_infer()`、`_end()`、`run()`；同文件含`TrialRecorder` |
 | [Env](../../../diffusion_policy/real_world/tianji_rail_env.py) | 管理相机、双臂和双手；缓存实际反馈；对齐与预处理观测；接合、发布动作及关闭设备 | `start()`、`get_obs()`、`engage()`、`exec_actions()`、`pause()`、`close()` |
 | [Runtime](../../../diffusion_policy/real_world/tianji_policy_runtime.py) | 筛选未来目标、整批校验、更新队列；独立推进双臂及双手；检查过期和健康状态 | `future_actions()`、`validate_actions()`、`submit()`、`tick()`、`pause()` |
 | [Policy](../../../diffusion_policy/policy/diffusion_transformer_hybrid_image_policy.py) | 观测编码、条件扩散采样、动作反归一化；使用训练保存的模型参数 | `predict_action()`、`reset()` |
+
+以上图示与闭环说明以末端版为例。关节版的区别：观测使用每臂7个实测关节；Runtime 按关节限位、跳变和速度校验，双臂改由 `tianji_joint_executor.py` 直接下发关节目标，不经逆运动学；详见[快速使用的关节版部署](../README.md#关节版部署)。
 
 文件图的“Runner → Runtime”表示动作传递关系，实际调用为 **Runner → Env.exec_actions() → Runtime.submit()**。
 
