@@ -168,7 +168,6 @@ class TianjiRailEnv:
                          "arms/left", "arms/right", "hands/left", "hands/right")}
         arm_config = load_arm_config(config["arm_config"])
         hand_config = load_hand_config(config["hand_config"])
-        self.arm_settings = arm_config
         self.arm_profile = ControlProfile(**arm_config["profile"])
         self.hand_profile = ControlProfile(hand_config["profile_id"], "mit", hand_config["parameters"])
         self.kinematics = TianjiKinematics()
@@ -331,91 +330,31 @@ class TianjiRailEnv:
             histories = {key: list(history) for key, history in self.histories.items()}
         return align_observation(histories, self.n_obs_steps, self.config, now_ns=time.monotonic_ns())
 
-    def confirm_return_home(self):
-        """Ask before moving. False means the operator cancelled and nothing moved."""
-        import home_tianji_rail as home
-        print("推理开始前会先回初始位：双臂回到 ready_pose，双手回到示范起点。回位不下发策略动作。")
-        with home.MotionTerminal() as terminal:
-            return home.confirm_motion(terminal)
-
-    def _return_home(self, terminal):
-        import home_tianji_rail as home
-        from diffusion_policy.real_world.hand_settle import settle_and_hold
-        try:
-            home.home_connected_arms(self.driver, self.arm_settings, terminal)
-            if self._hand_hold is not None and self._hand_hold.running:
-                print("双手继续保持示范起点。")
-            else:
-                self.stop_hand_hold(raise_error=False)
-                goals = {side: home.hand_home_rad(side) for side in SIDES}
-                settle_and_hold(self, goals, np.deg2rad(5.), terminal.read,
-                                duration_s=3., settle_timeout_s=2., goal_name="示范起点")
-        except BaseException:
-            self.stop_hand_hold(raise_error=False)
-            for hand in self.hands.values():
-                try:
-                    if getattr(hand, "enabled", False):
-                        hand.disable("return home failed")
-                except Exception:
-                    pass
-            try:
-                if getattr(self.driver, "engaged", False):
-                    self.driver.request_hold("return home failed")
-            except Exception:
-                pass
-            raise
-
-    def engage(self, *, home=False):
+    def engage(self):
         if not self.motion:
             raise RuntimeError("Shadow mode cannot engage devices")
         if any(self.config["workspace"][side] is None for side in SIDES):
             raise ValueError("Fill both measured workspaces before motion")
-        seeded = False
+        obs, _, _ = self.get_obs()
+        self.stop_hand_hold()
+        self.runtime.seed(np.r_[obs["robot_eef_pose"][-1], obs["hand_joint"][-1]])
         try:
-            if home:
-                import home_tianji_rail as home
-                # The finger hold keeps streaming until the policy runtime takes the same pose.
-                with self.runtime.suppress_commands():
-                    with home.MotionTerminal() as terminal:
-                        self._return_home(terminal)
-                    self._enable_devices(position_mode_configure=True)
-                    seeded = True
-                    self.stop_hand_hold()
-            else:
-                obs, _, _ = self.get_obs()
-                self.stop_hand_hold()
-                self.runtime.seed(np.r_[obs["robot_eef_pose"][-1], obs["hand_joint"][-1]])
-                seeded = True
-                self._enable_devices(position_mode_configure=False)
+            for hand in self.hands.values():
+                if hand.profile is None:
+                    hand.configure(self.hand_profile)
+                hand.engage()
+            if self.driver.profile is None:
+                self.arm.configure(self.arm_profile)
+            self.arm.engage()
+            # Use the exact arm engagement reference, not a previous aligned camera pose.
+            seed = np.concatenate([np.r_[self.arm.engagement_poses[side].position_m,
+                       Rotation.from_quat(self.arm.engagement_poses[side].orientation_xyzw).as_rotvec()]
+                       for side in SIDES] + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
+            self.runtime.seed(seed, arm_ready=True)
         except Exception as error:
-            if self._hand_hold is None and not seeded:
-                for hand in self.hands.values():
-                    try:
-                        if getattr(hand, "enabled", False):
-                            hand.disable("engagement failed")
-                    except Exception:
-                        pass
+            self.stop_hand_hold(raise_error=False)
             self.runtime.pause(error, fault=True)
             raise
-
-    def _enable_devices(self, *, position_mode_configure):
-        for hand in self.hands.values():
-            if hand.profile is None:
-                hand.configure(self.hand_profile)
-            hand.engage()
-        profile_id = getattr(self.driver.profile, "profile_id", None)
-        if profile_id != self.arm_profile.profile_id:
-            if position_mode_configure and profile_id is not None:
-                print("机械臂保持位置力矩，并切换到推理控制参数。双手保持示范起点。")
-                self.arm.configure(self.arm_profile, require_impedance=False)
-            else:
-                self.arm.configure(self.arm_profile)
-        self.arm.engage()
-        # Use the exact arm engagement reference, not a previous aligned camera pose.
-        seed = np.concatenate([np.r_[self.arm.engagement_poses[side].position_m,
-                   Rotation.from_quat(self.arm.engagement_poses[side].orientation_xyzw).as_rotvec()]
-                   for side in SIDES] + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
-        self.runtime.seed(seed, arm_ready=True)
 
     def exec_actions(self, actions, anchor_ns, prediction_id=None):
         if self.motion:

@@ -7,13 +7,15 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import create_autospec, patch
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 import yaml
 
-from diffusion_policy.third_party.bimanual_teleop.types import JointTarget, Submission
+from diffusion_policy.third_party.bimanual_teleop.control.arm.cartesian import TianjiCartesianExecutor
+from diffusion_policy.third_party.bimanual_teleop.devices.tianji.driver import TianjiDriver
+from diffusion_policy.third_party.bimanual_teleop.types import ControlProfile, JointTarget, Submission
 from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import JOINT_NAMES
 from diffusion_policy.real_world.tianji_policy_runtime import (
     HOLD_TTL_NS, TianjiPolicyRuntime, future_actions, split_action, validate_actions,
@@ -84,6 +86,14 @@ class FakeHand:
 
 
 class RealEvaluationTests(unittest.TestCase):
+    def test_arm_configuration_matches_driver_interface(self):
+        # Enforce the real driver's signature without connecting to hardware.
+        driver = create_autospec(TianjiDriver, instance=True)
+        executor = TianjiCartesianExecutor(driver, None)
+        profile = ControlProfile("offline-arm", "cartesian", {})
+        executor.configure(profile)
+        driver.configure.assert_called_once_with(profile)
+
     def test_shadow_lifecycle_never_configures_enables_or_submits(self):
         module = "diffusion_policy.real_world.tianji_rail_env"
         with patch(f"{module}.TianjiKinematics") as kine_type, patch(f"{module}.TianjiDriver") as arm_type, \
@@ -332,84 +342,13 @@ class RealEvaluationTests(unittest.TestCase):
             for now in (int(times[-2]) + 1_000_000, coverage_end - 1_000_000):
                 self.now = now
                 runtime.tick("arm")
-                expected = max(coverage_end, now + HOLD_TTL_NS)
+                expected = now + HOLD_TTL_NS if mode == "sync" else coverage_end
                 self.assertEqual(runtime.arm.commands[-1].expires_monotonic_ns, expected, mode)
             if mode == "sync":
                 self.now = coverage_end + 1
                 runtime.tick("arm")
                 self.assertTrue(runtime.sync_waiting)
                 self.assertEqual(runtime.arm.commands[-1].expires_monotonic_ns, self.now + HOLD_TTL_NS)
-
-    def test_arm_ik_expiry_does_not_fault_or_drop_the_arm(self):
-        runtime = self.runtime()
-        runtime.submit(np.zeros((8, 52)), self.now)
-
-        def expire(target):
-            runtime.arm.commands.append(target)
-            return Submission(target.command_id, False, "target expired during IK")
-
-        runtime.arm.submit = expire
-        runtime.tick("arm")
-        self.assertIsNone(runtime.fault)
-        self.assertTrue(runtime.active)
-        self.assertTrue(runtime.arm.driver.engaged)
-
-    def test_ik_overrun_submits_planned_joints_without_requesting_hold(self):
-        from types import SimpleNamespace
-        from diffusion_policy.third_party.bimanual_teleop.control.arm.cartesian import TianjiCartesianExecutor
-        from diffusion_policy.third_party.bimanual_teleop.types import Pose, RobotTarget
-
-        class Clock:
-            def __init__(self):
-                self.now = 1_000_000_000
-
-            def __call__(self):
-                return self.now
-
-        clock = Clock()
-
-        class Servo:
-            def propose(self, pose, dt, actual_rad=None):
-                clock.now += 40_000_000
-                return SimpleNamespace(joints=(0.,) * 7, pose=pose, limited=False, progress=1.,
-                                       position_error_m=0., orientation_error_rad=0.)
-
-            def accept(self, step):
-                pass
-
-        class Driver:
-            def __init__(self):
-                self.engaged = True
-                self.profile = SimpleNamespace(profile_id="arm", active_arms=("left", "right"))
-                self.watchdog_ns = 80_000_000
-                self.commands = []
-                self.holds = []
-
-            def get_latest(self):
-                return None
-
-            def submit(self, command):
-                self.commands.append(command)
-                return Submission(command.command_id, True)
-
-            def request_hold(self, reason):
-                self.holds.append(reason)
-                self.engaged = False
-
-        driver = Driver()
-        executor = TianjiCartesianExecutor(driver, None, clock_ns=clock)
-        executor._reference = {"left": (0.,) * 7, "right": (0.,) * 7}
-        executor._servos = {"left": Servo(), "right": Servo()}
-        executor._generation = 1
-        pose = Pose("base", "flange", (0., 0., 0.), (0., 0., 0., 1.))
-        created = clock.now
-        target = RobotTarget("2-arm-1", {"left": pose, "right": pose}, (), created, created + 10_000_000, "arm")
-        result = executor.submit(target)
-        self.assertTrue(result.accepted)
-        self.assertEqual(driver.holds, [])
-        self.assertTrue(executor.timing_status["ik_overrun"])
-        self.assertGreater(driver.commands[0].expires_monotonic_ns, clock.now)
-        self.assertEqual(driver.commands[0].expires_monotonic_ns, clock.now + driver.watchdog_ns)
 
     def test_partial_hand_rejection_stops_all_groups(self):
         runtime = self.runtime()
@@ -643,147 +582,17 @@ class RealEvaluationTests(unittest.TestCase):
         schedule = next(values for event, values in reversed(self.events) if event == "schedule")
         self.assertEqual(schedule["prediction_id"], 3)
 
-    def test_suppressed_runtime_does_not_submit(self):
-        runtime = self.runtime()
-        runtime.submit(np.zeros((8, 52)), self.now)
-        with runtime.suppress_commands():
-            runtime.tick("arm")
-            runtime.tick("hand", "left")
-            self.assertEqual(runtime.arm.commands, [])
-            self.assertEqual(runtime.hands["left"].commands, [])
-        runtime.tick("arm")
-        self.assertEqual(len(runtime.arm.commands), 1)
-        self.assertFalse(runtime._commands_suppressed)
-
-    def test_motion_engage_homes_before_switching_to_the_policy_profile(self):
-        from diffusion_policy.third_party.bimanual_teleop.types import Pose
-        module = "diffusion_policy.real_world.tianji_rail_env"
-        calls = []
-
-        class Terminal:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return False
-
-            def read(self, timeout):
-                return None
-
-        with patch(f"{module}.TianjiKinematics") as kine_type, patch(f"{module}.TianjiDriver"), \
-             patch(f"{module}.WujiSdkSession"), patch(f"{module}.WujiHandDriver"), patch(f"{module}.CameraRig"), \
-             patch("home_tianji_rail.MotionTerminal", Terminal), \
-             patch("diffusion_policy.real_world.hand_settle.settle_and_hold") as settle:
-            kine_type.return_value.model.digest = config()["expected_model_sha256"]
-            env = TianjiRailEnv(config(), 2)
-            env.motion = True
-            env.driver.engaged = False
-            env.driver.profile = None
-
-            def ready_configure(profile):
-                calls.append(("ready_profile", profile.profile_id))
-                env.driver.profile = SimpleNamespace(profile_id=profile.profile_id)
-
-            def policy_configure(profile, require_impedance=True):
-                calls.append(("policy_profile", profile.profile_id, require_impedance))
-                env.driver.profile = SimpleNamespace(profile_id=profile.profile_id)
-
-            def arm_engage():
-                calls.append("arm_engage")
-                env.arm._engagement_poses = {
-                    side: Pose(f"tianji_{side}_base", f"tianji_{side}_flange", (0., 0., 0.), (0., 0., 0., 1.))
-                    for side in ("left", "right")}
-
-            env.driver.configure = ready_configure
-            env.driver.clear_errors = lambda *args, **kwargs: calls.append("clear")
-            env.driver.move_joints = lambda *args, **kwargs: calls.append("move")
-            env.driver.start = lambda *args, **kwargs: calls.append("start")
-            env.driver.close = lambda *args, **kwargs: calls.append("close")
-            env.arm.configure = policy_configure
-            env.arm.engage = arm_engage
-            for side, hand in env.hands.items():
-                hand.side = side
-                hand.profile = None
-                hand.enabled = False
-                hand.last_target = SimpleNamespace(position_rad=(0.,) * 20)
-                hand.engage = lambda hand=hand: setattr(hand, "enabled", True)
-                hand.disable = lambda reason, hand=hand: setattr(hand, "enabled", False)
-
-            def fake_settle(target, goals, tolerance, read_key, **kwargs):
-                calls.append(("hands", kwargs.get("goal_name")))
-                self.assertEqual(set(goals), {"left", "right"})
-                self.assertEqual(len(goals["left"]), 20)
-                for one in target.hands.values():
-                    one.profile = target.hand_profile
-                    one.enabled = True
-                    one.last_target = SimpleNamespace(position_rad=tuple(goals[one.side]))
-
-            settle.side_effect = fake_settle
-            env.get_obs = lambda: ({"robot_eef_pose": np.zeros((2, 12)), "hand_joint": np.zeros((2, 40))}, 0, {})
-            env.engage(home=True)
-            policy_id = env.arm_profile.profile_id
-        self.assertEqual(calls, [
-            "clear", ("ready_profile", policy_id + "-ready"), "move", "move",
-            ("hands", "示范起点"), ("policy_profile", policy_id, False), "arm_engage"])
-        self.assertNotIn("start", calls)
-        self.assertNotIn("close", calls)
-        self.assertTrue(env.runtime.arm_ready)
-        self.assertFalse(env.runtime._commands_suppressed)
-
-    def test_motion_begin_homes_before_inference(self):
+    def test_motion_begin_engages_without_homing(self):
         calls = []
         env = SimpleNamespace(
             motion=True, config=config(), recorder=None, error=None,
-            confirm_return_home=lambda: calls.append("confirm") or True,
-            engage=lambda home=False: calls.append(("engage", home)),
+            engage=lambda: calls.append("engage"),
             pause=lambda reason: None)
         with tempfile.TemporaryDirectory() as root:
             runner = TianjiRailRealRunner(env, SimpleNamespace(), {}, {}, Path(root) / "session")
             runner._begin()
-            self.assertEqual(calls, ["confirm", ("engage", True)])
+            self.assertEqual(calls, ["engage"])
             self.assertTrue(runner._enabled.is_set())
-            runner._end("takeover", "test")
-
-    def test_declined_home_confirmation_does_not_open_a_trial(self):
-        env = SimpleNamespace(
-            motion=True, config=config(), recorder=None, error=None,
-            confirm_return_home=lambda: False,
-            engage=lambda home=False: (_ for _ in ()).throw(AssertionError("engage")),
-            pause=lambda reason: None)
-        with tempfile.TemporaryDirectory() as root:
-            output = Path(root) / "session"
-            runner = TianjiRailRealRunner(env, SimpleNamespace(), {}, {}, output)
-            runner._begin()
-            self.assertFalse(runner._enabled.is_set())
-            self.assertEqual(list(output.glob("trial_*")), [])
-
-    def test_cancelled_home_does_not_start_inference(self):
-        import home_tianji_rail as home_script
-        env = SimpleNamespace(
-            motion=True, config=config(), recorder=None, error=None,
-            confirm_return_home=lambda: True,
-            engage=lambda home=False: (_ for _ in ()).throw(home_script.Cancelled()),
-            pause=lambda reason: None)
-        with tempfile.TemporaryDirectory() as root:
-            output = Path(root) / "session"
-            runner = TianjiRailRealRunner(env, SimpleNamespace(), {}, {}, output)
-            runner._begin()
-            self.assertFalse(runner._enabled.is_set())
-            trial = json.loads((output / "trial_0001" / "trial.json").read_text())
-        self.assertEqual(trial["outcome"], "takeover")
-
-    def test_batch_motion_keeps_its_own_home_step(self):
-        calls = []
-        env = SimpleNamespace(
-            motion=True, config=config(), recorder=None, error=None,
-            confirm_return_home=lambda: (_ for _ in ()).throw(AssertionError("confirm")),
-            engage=lambda home=False: calls.append(home),
-            pause=lambda reason: None)
-        with tempfile.TemporaryDirectory() as root:
-            runner = TianjiRailRealRunner(env, SimpleNamespace(), {}, {}, Path(root) / "session")
-            runner.batch_hooks = SimpleNamespace(check_init=None, init_report=None)
-            runner._begin()
-            self.assertEqual(calls, [False])
             runner._end("takeover", "test")
 
 

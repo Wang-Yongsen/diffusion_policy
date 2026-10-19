@@ -642,7 +642,7 @@ class TianjiDriver:
             with self._lock:
                 self._clearing_errors = False
 
-    def configure(self, profile: ControlProfile, *, require_impedance: bool = True) -> None:
+    def configure(self, profile: ControlProfile) -> None:
         parsed = MotionProfile.from_control_profile(profile, self.model_path)
         with self._lock:
             self._connected()
@@ -665,18 +665,12 @@ class TianjiDriver:
                 self._connected()
                 self._require_feedback(parsed.active_arms)
                 packet = self._packet
-                sample = self.get_latest()
                 confirmed = all(self._advanced.get(side, 0) > submitted for side in parsed.active_arms)
                 for side, channels in expected.items():
                     index, arm = SIDES.index(side), parsed.arms[side]
-                    # Position mode keeps reporting force_type 0. After a joint
-                    # home the servos stay on, so accept the other echoes and let
-                    # the following Cartesian engage switch the mode.
-                    in_position_mode = (not require_impedance and sample is not None
-                                        and sample.payload.arms[side].state == 1)
                     confirmed &= (packet.velocity_ratio[index] == arm.velocity_ratio
                                   and packet.acceleration_ratio[index] == arm.acceleration_ratio
-                                  and (in_position_mode or packet.force_type[index] == 1))
+                                  and packet.force_type[index] == 1)
                     for name, values in channels.items():
                         width = len(values)
                         confirmed &= tuple(getattr(packet, name)[index*width:(index+1)*width]) == tuple(

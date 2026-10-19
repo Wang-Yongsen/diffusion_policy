@@ -193,12 +193,6 @@ class TianjiRailRealRunner:
     def _begin(self):
         if self._trial is not None:
             return
-        # Batch slots home to their frozen start with --mode home. A normal motion
-        # trial homes to ready_pose and the demonstration hand pose before inference.
-        should_home = bool(self.env.motion and self.batch_hooks is None)
-        if should_home and not self.env.confirm_return_home():
-            print("已取消回位，未开始推理。")
-            return
         self._count += 1
         self._snapshot_index = 0
         self._trial = TrialRecorder(self.output / f"trial_{self._count:04d}",
@@ -227,22 +221,15 @@ class TianjiRailRealRunner:
                       "缓冲满会把本段标为无效，不会停住控制。")
             if self.trace is not None:
                 self.trace.begin_trial()
-            if self.env.motion:
-                self.env.engage(home=should_home)
-            # The limit covers inference and execution, not the preceding home move.
             self._started = time.monotonic()
+            if self.env.motion:
+                self.env.engage()
             # Inference/reset are serialized inside the worker, never in the control loops.
             with self._inference_lock:
                 if self.metadata.get("batch_seed") is not None:
                     self.policy.reseed(int(self.metadata["batch_seed"]))
                 self._enabled.set()
         except Exception as error:
-            import home_tianji_rail as home
-            from diffusion_policy.real_world.hand_settle import HandSettleCancelled
-            if isinstance(error, (home.Cancelled, HandSettleCancelled)):
-                self._end("takeover", "Home cancelled")
-                print("已取消回位，未开始推理。")
-                return
             self._end("device_abort", str(error))
             print(f"试验未能开始：{error}")
 
@@ -460,7 +447,7 @@ class TianjiRailRealRunner:
             self._begin()
         print("s 开始试验；p 暂停并记接管；y 成功；n 失败；q 退出（终端输入后按 Enter）。")
         print("默认影子模式，不使能设备。" if not self.env.motion else
-              "运动模式：按 s 后先确认回初始位，到位后才接合并推理。回位中按 Q 取消。")
+              "运动模式：每次仍需手动 s 开始。")
         if self.trace is not None and self.env.motion:
             print("出现明显偏离就可以停，不必凑满试验时限。有人递送导轨或扶机器人时，用 p 记下接管时间。")
         try:

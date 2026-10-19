@@ -56,11 +56,6 @@ class HandHold:
         self._thread = threading.Thread(target=self._run, name="hand-settle-hold", daemon=True)
         self._thread.start()
 
-    @property
-    def running(self):
-        thread = self._thread
-        return thread is not None and thread.is_alive() and self.error is None
-
     def stop(self):
         self._stop.set()
         thread = self._thread

@@ -1,6 +1,5 @@
 """Absolute 52-D targets, monotonic scheduling and independent device loops."""
 
-from contextlib import contextmanager
 import threading
 import time
 
@@ -108,19 +107,6 @@ class TianjiPolicyRuntime:
         self.chunk_completed_ns = None
         self.trace = None
         self._prediction_id = None
-        self._commands_suppressed = False
-
-    @contextmanager
-    def suppress_commands(self):
-        """Keep the control loops from submitting while another caller moves the devices."""
-        self._commands_suppressed = True
-        for key in ("arm", *SIDES):
-            self._device_locks[key].acquire()
-            self._device_locks[key].release()
-        try:
-            yield
-        finally:
-            self._commands_suppressed = False
 
     def start(self):
         for kind, side in (("arm", None), ("hand", "left"), ("hand", "right")):
@@ -225,20 +211,15 @@ class TianjiPolicyRuntime:
 
     def tick(self, kind, side=None):
         """One control tick, also used by fake-clock tests."""
-        if self._commands_suppressed:
-            return
         if kind == "hand" and side is None:
             for selected in SIDES:
                 self.tick(kind, selected)
             return
         with self._device_locks["arm" if kind == "arm" else side]:
-            if self._commands_suppressed:
-                return
             with self._lock:
                 now = self.clock_ns()
                 active, generation = self.active, self._generation
-                period = round(1e9 / self.config["policy_hz"])
-                if active and self.sync and now >= self._times[-1] + period:
+                if active and self.sync and now >= self._times[-1] + round(1e9 / self.config["policy_hz"]):
                     self._complete_chunk(now)
                     active = False
                 waiting = self.sync_waiting
@@ -248,13 +229,10 @@ class TianjiPolicyRuntime:
                         raise RuntimeError(problem)
                 if active:
                     action = self._target(now)
-                    # Dual-arm IK has been measured up to 56 ms. An async chunk can
-                    # have less than that left after inference; the executor used to
-                    # reject the target and drop arm torque. Every command gets the
-                    # hold budget. The driver still clamps the controller deadline
-                    # to its watchdog. Coverage that has already ended still stops
-                    # the trial in _target.
-                    expiry = max(int(self._times[-1]) + period, now + HOLD_TTL_NS)
+                    expiry = int(self._times[-1]) + round(1e9 / self.config["policy_hz"])
+                    if self.sync:
+                        # Sync holds the final step after the chunk, so no step must expire at coverage end.
+                        expiry = max(expiry, now + HOLD_TTL_NS)
                 else:
                     # Holding is a distinct mode with the last accepted hand target.
                     action, expiry = self._last_action, now + HOLD_TTL_NS
@@ -312,10 +290,6 @@ class TianjiPolicyRuntime:
                 except Exception as error:
                     self.trace.mark_invalid(error)
             if any(not r.accepted for r in receipts.values()):
-                # IK finished after the caller's deadline. The executor does not
-                # drop torque for that; the next tick sends a fresh target.
-                if kind == "arm" and getattr(receipts["arms"], "reason", None) == "target expired during IK":
-                    return
                 raise RuntimeError(f"Partial/rejected {kind} submission: {receipts}")
 
     def _loop(self, kind, side=None):
