@@ -10,7 +10,7 @@ expected_model_sha256: ce20b1a80974c3ed58cdac4973152625096c8ad93a779e5fd4108c26c
 device: cuda:0
 # 观测历史及预测动作的时间网格，只能为10或30；部署入口检查与checkpoint的task.sample_hz一致。
 # 30 Hz模型用 --set policy_hz=30 运行。
-policy_hz: 10
+policy_hz: 30
 # 双臂复用 200 Hz 伺服，双手 120 Hz；推理不占用控制线程。
 arm_hz: 200
 hand_hz: 120

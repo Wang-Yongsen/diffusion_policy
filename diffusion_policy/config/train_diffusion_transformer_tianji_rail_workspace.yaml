@@ -11,7 +11,7 @@ shape_meta: ${task.shape_meta}
 # 修改时应满足 n_obs_steps-1+n_action_steps <= horizon。
 # 当前10 Hz：两步观测相隔100 ms，16步标签首尾跨度1.5秒；8步执行段覆盖0.8秒。
 horizon: 16
-n_obs_steps: 2
+n_obs_steps: 1
 n_action_steps: 8
 policy:
   # 用户指定的 Transformer Hybrid Image Policy。

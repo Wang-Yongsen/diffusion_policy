@@ -1,3 +1,4 @@
+
 # 汽车导轨任务快速使用
 
 本项目负责模型训练、离线评估和真机评估；数据采集、整理和转换在 [bimanual-teleop](../../../bimanual-teleop/README.md) 中完成。模型分两种动作空间：**末端版**（`eef`）使用三路RGB、双臂末端位姿和双手关节，预测52维动作；**关节版**（`joint`）使用三路RGB、双臂关节和双手关节，预测54维动作。两者共用同一套训练配置和部署配置，训练时用命令行参数选择动作空间，部署时从 checkpoint 自动识别。构建状态见[分阶段计划](../../plan/tianji-rail-build-plan.md)。
@@ -37,10 +38,10 @@ python -c "import sys; print(sys.executable)"
 
 两种动作空间的数据契约如下，由Zarr根属性 `action_space` 标明；位置用米，旋转向量和关节角用弧度，动作均为绝对目标：
 
-| 动作空间 | 训练参数                          | 低维观测                                        | 动作                                     |
-| -------- | --------------------------------- | ----------------------------------------------- | ---------------------------------------- |
+| 动作空间 | 训练参数                          | 低维观测                                                          | 动作                               |
+| -------- | --------------------------------- | ----------------------------------------------------------------- | ---------------------------------- |
 | 末端版   | `task.action_space=eef`（默认） | `robot_eef_pose` 12维（每臂XYZ＋旋转向量）、`hand_joint` 40维 | 52维：左臂6、右臂6、左手20、右手20 |
-| 关节版   | `task.action_space=joint`       | `robot_joint` 14维（每臂7关节）、`hand_joint` 40维 | 54维：左臂7、右臂7、左手20、右手20 |
+| 关节版   | `task.action_space=joint`       | `robot_joint` 14维（每臂7关节）、`hand_joint` 40维            | 54维：左臂7、右臂7、左手20、右手20 |
 
 两者的图像输入相同，均为三路RGB原图640×480。训练参数与Zarr的 `action_space` 不一致时，Dataset 启动即报错。原始演示边界为 `meta/episode_ends`，连续片段边界为 `meta/segment_ends`，训练窗口不跨片段边界。数据中的其他字段不会自动成为模型输入。
 
@@ -48,11 +49,11 @@ python -c "import sys; print(sys.executable)"
 
 **训练数据路径每次在命令行指定，其余参数使用 YAML 中的设置，按需修改。** 命令行参数优先于 YAML，只对本次运行生效。长期使用的参数在配置文件修改：
 
-| 配置文件                                                                                                | 内容                                                                 |
-| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 配置文件                                                                                                | 内容                                                                                                 |
+| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | [任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)                                    | 动作空间、两种动作空间的观测和动作契约、数据采样频率、验证比例、图像预处理；数据路径在每次运行时覆盖 |
-| [正式训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_workspace.yaml)     | 默认每批64个样本、4个读取进程、600轮、每轮完整训练                   |
-| [短训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_smoke_workspace.yaml) | 继承正式配置，每批2个样本、0个读取进程、每轮2批、共2轮，用于检查流程 |
+| [正式训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_workspace.yaml)     | 默认每批64个样本、4个读取进程、600轮、每轮完整训练                                                   |
+| [短训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_smoke_workspace.yaml) | 继承正式配置，每批2个样本、0个读取进程、每轮2批、共2轮，用于检查流程                                 |
 
 当前按原图训练：`task.image_shape=[3,480,640]`、`task.dataset.resize_enabled=false`、`policy.crop_shape=null`，保留宽640、高480的整幅图像。改变输入尺寸后新建实验；恢复训练须使用 checkpoint 对应的原配置。
 
@@ -86,7 +87,7 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 
 | 配置参数                                         | 当前值               | 何时修改                                                                                |
 | ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
-| `task.action_space`                            | `eef`              | 关节版数据设为`joint`，须与Zarr的`action_space` 一致                                 |
+| `task.action_space`                            | `eef`              | 关节版数据设为`joint`，须与Zarr的`action_space` 一致                                |
 | `task.sample_hz`                               | `30`               | 数据采样频率改变时同步修改，须与Zarr的`target_fps` 一致                               |
 | `task.dataset.val_ratio`                       | `0.05`             | 调整按独立演示来源留出的验证比例；单条演示设为`0`                                     |
 | `dataloader.batch_size`                        | `64`               | 按显存容量调整每批样本数，显存不足时减小                                                |
@@ -104,8 +105,10 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 末端版和关节版**不再有单独的配置文件**，统一使用上面的正式训练配置或短训练配置，用 `task.action_space` 选择动作空间。该参数决定观测字段、动作维度和输出目录后缀（取值见第2节的契约表）；其余参数相同，同样可在命令行覆盖。关节版数据的命令（数据路径为本机关节版30 Hz数据示例）：
 
 ```bash
+# 2026/10/19 14：06 使用关节版数据集、只观测一帧
 python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace \
   task.action_space=joint \
+  n_obs_steps=1 \
   "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place3_joint_30hz.zarr"
 ```
 
@@ -216,13 +219,13 @@ python eval_tianji_rail.py \
 
 `--device`、`--inference-mode` 是常用参数的快捷写法，与 `--set device=...`、`--set inference_mode=...` 等价。常用覆盖：
 
-| 场景                       | 命令行参数                                                       |
-| -------------------------- | ---------------------------------------------------------------- |
-| 30 Hz模型（替代原宽松配置） | `--set policy_hz=30 --set replanning_steps=2`                |
-| 收紧末端版跳变限制         | `--set max_position_jump_m=0.05 --set max_rotation_jump_rad=0.2` |
-| 收紧关节版跳变和速度限制   | `--set max_arm_joint_jump_rad=0.3 --set max_arm_joint_speed_rad_s=1.0` |
-| 延长单次试验时间           | `--set trial_timeout_s=60`                                     |
-| 填写工作空间（末端版）     | `--set "workspace.left.min=[0.1,-0.3,0.2]" --set "workspace.left.max=[0.6,0.3,0.7]"` |
+| 场景                        | 命令行参数                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| 30 Hz模型（替代原宽松配置） | `--set policy_hz=30 --set replanning_steps=2`                                        |
+| 收紧末端版跳变限制          | `--set max_position_jump_m=0.05 --set max_rotation_jump_rad=0.2`                     |
+| 收紧关节版跳变和速度限制    | `--set max_arm_joint_jump_rad=0.3 --set max_arm_joint_speed_rad_s=1.0`               |
+| 延长单次试验时间            | `--set trial_timeout_s=60`                                                           |
+| 填写工作空间（末端版）      | `--set "workspace.left.min=[0.1,-0.3,0.2]" --set "workspace.left.max=[0.6,0.3,0.7]"` |
 
 各参数的含义和单位见部署配置中的注释。末端版只检查 `max_position_*`、`max_rotation_*` 和 `workspace`；关节版只检查 `max_arm_joint_*`；`max_hand_*` 两者都检查。
 
