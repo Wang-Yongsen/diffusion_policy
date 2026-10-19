@@ -1,5 +1,6 @@
 """Absolute 52-D targets, monotonic scheduling and independent device loops."""
 
+from contextlib import contextmanager
 import threading
 import time
 
@@ -105,12 +106,35 @@ class TianjiPolicyRuntime:
         # Sync only: engaged and holding the last target until the next prediction is submitted.
         self.sync_waiting = False
         self.chunk_completed_ns = None
+        self.trace = None
+        self._prediction_id = None
+        self._commands_suppressed = False
+
+    @contextmanager
+    def suppress_commands(self):
+        """Keep the control loops from submitting while another caller moves the devices."""
+        self._commands_suppressed = True
+        for key in ("arm", *SIDES):
+            self._device_locks[key].acquire()
+            self._device_locks[key].release()
+        try:
+            yield
+        finally:
+            self._commands_suppressed = False
 
     def start(self):
         for kind, side in (("arm", None), ("hand", "left"), ("hand", "right")):
             thread = threading.Thread(target=self._loop, args=(kind, side), name=f"policy-{side or kind}", daemon=True)
             self._threads.append(thread)
             thread.start()
+
+    @property
+    def reference_action(self):
+        """Last accepted 52-D target, including the engagement seed. Jump checks use this."""
+        with self._lock:
+            if self._last_action is None:
+                return None
+            return self._last_action.copy()
 
     def seed(self, action, *, arm_ready=False):
         with self._lock:
@@ -125,7 +149,7 @@ class TianjiPolicyRuntime:
             self.sync_waiting = self.sync and arm_ready
             self.chunk_completed_ns = self.clock_ns() if self.sync_waiting else None
 
-    def submit(self, actions, anchor_ns):
+    def submit(self, actions, anchor_ns, prediction_id=None):
         with self._lock:
             if self.fault or self._stop.is_set():
                 raise RuntimeError(self.fault or "Runtime closed")
@@ -147,8 +171,12 @@ class TianjiPolicyRuntime:
             self.active = True
             self.sync_waiting = False
             self.chunk_completed_ns = None
-            self.emit("schedule", generation=self._generation, times_ns=times,
-                      actions=actions, dropped_steps=dropped)
+            self._prediction_id = None if prediction_id is None else int(prediction_id)
+            scheduled = {"generation": self._generation, "times_ns": times,
+                         "actions": actions, "dropped_steps": dropped}
+            if prediction_id is not None:
+                scheduled["prediction_id"] = int(prediction_id)
+            self.emit("schedule", **scheduled)
             return dropped
 
     def pause(self, reason, *, fault=False):
@@ -197,15 +225,20 @@ class TianjiPolicyRuntime:
 
     def tick(self, kind, side=None):
         """One control tick, also used by fake-clock tests."""
+        if self._commands_suppressed:
+            return
         if kind == "hand" and side is None:
             for selected in SIDES:
                 self.tick(kind, selected)
             return
         with self._device_locks["arm" if kind == "arm" else side]:
+            if self._commands_suppressed:
+                return
             with self._lock:
                 now = self.clock_ns()
                 active, generation = self.active, self._generation
-                if active and self.sync and now >= self._times[-1] + round(1e9 / self.config["policy_hz"]):
+                period = round(1e9 / self.config["policy_hz"])
+                if active and self.sync and now >= self._times[-1] + period:
                     self._complete_chunk(now)
                     active = False
                 waiting = self.sync_waiting
@@ -215,14 +248,21 @@ class TianjiPolicyRuntime:
                         raise RuntimeError(problem)
                 if active:
                     action = self._target(now)
-                    expiry = int(self._times[-1]) + round(1e9 / self.config["policy_hz"])
-                    if self.sync:
-                        # Sync holds the final step after the chunk, so no step must expire at coverage end.
-                        expiry = max(expiry, now + HOLD_TTL_NS)
+                    # Dual-arm IK has been measured up to 56 ms. An async chunk can
+                    # have less than that left after inference; the executor used to
+                    # reject the target and drop arm torque. Every command gets the
+                    # hold budget. The driver still clamps the controller deadline
+                    # to its watchdog. Coverage that has already ended still stops
+                    # the trial in _target.
+                    expiry = max(int(self._times[-1]) + period, now + HOLD_TTL_NS)
                 else:
                     # Holding is a distinct mode with the last accepted hand target.
                     action, expiry = self._last_action, now + HOLD_TTL_NS
                 nominal = self._last_nominal_ns
+                trace_prediction = self._prediction_id if self.trace is not None and active else None
+                trace_step = None
+                if self.trace is not None and active and len(self._times):
+                    trace_step = int(np.searchsorted(self._times, now, side="right") - 1)
             if action is None:
                 return
             poses, targets = split_action(action)
@@ -260,7 +300,22 @@ class TianjiPolicyRuntime:
                     target, (), now, expiry, hand.profile.profile_id))}
             self.emit("submission", kind=kind, side=side, mode="policy" if active else "hold",
                       planned_ns=nominal, started_ns=now, returned_ns=self.clock_ns())
+            if self.trace is not None:
+                try:
+                    if kind == "arm":
+                        self.trace.annotate_command(command_id, prediction_id=trace_prediction, chunk_id=generation,
+                                                    step_id=trace_step, started_ns=now)
+                    else:
+                        self.trace.note_hand_command(command_id=command_id, side=side, q=target.position_rad,
+                                                     prediction_id=trace_prediction, chunk_id=generation,
+                                                     started_ns=now, accepted=receipts[side].accepted)
+                except Exception as error:
+                    self.trace.mark_invalid(error)
             if any(not r.accepted for r in receipts.values()):
+                # IK finished after the caller's deadline. The executor does not
+                # drop torque for that; the next tick sends a fresh target.
+                if kind == "arm" and getattr(receipts["arms"], "reason", None) == "target expired during IK":
+                    return
                 raise RuntimeError(f"Partial/rejected {kind} submission: {receipts}")
 
     def _loop(self, kind, side=None):

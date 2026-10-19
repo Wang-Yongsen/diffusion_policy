@@ -154,16 +154,21 @@ class TianjiRailEnv:
     def __init__(self, config, n_obs_steps, *, motion=False):
         self.config, self.n_obs_steps, self.motion = config, n_obs_steps, motion
         self.recorder = None
+        self.trace = None
+        self.record_observations = False
+        self._measured_log_at = 0.
         self.error = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._collector = None
         self._arm_sequences = {}
         self._shadow_chunk_end_ns = 0
+        self._hand_hold = None
         self.histories = {key: deque() for key in ("camera_0", "camera_1", "camera_2",
                          "arms/left", "arms/right", "hands/left", "hands/right")}
         arm_config = load_arm_config(config["arm_config"])
         hand_config = load_hand_config(config["hand_config"])
+        self.arm_settings = arm_config
         self.arm_profile = ControlProfile(**arm_config["profile"])
         self.hand_profile = ControlProfile(hand_config["profile_id"], "mit", hand_config["parameters"])
         self.kinematics = TianjiKinematics()
@@ -179,6 +184,13 @@ class TianjiRailEnv:
         self.cameras = CameraRig(camera_config)
         self.runtime = TianjiPolicyRuntime(self.arm, self.hands, config, self.health_problem, self.emit)
 
+    def enable_trace(self, trace):
+        if self.trace is not None:
+            raise RuntimeError("A trace is already attached")
+        self.trace = trace
+        self.runtime.trace = trace
+        trace.install_on(self.arm)
+
     def emit(self, event, **values):
         recorder = self.recorder
         if recorder is not None:
@@ -187,9 +199,15 @@ class TianjiRailEnv:
     def start(self):
         try:
             self.session.open()
-            self.driver.start()
-            for hand in self.hands.values():
-                hand.start()
+            sink = None if self.trace is None else self.trace.sink
+            if sink is None:
+                self.driver.start()
+                for hand in self.hands.values():
+                    hand.start()
+            else:
+                self.driver.start(sink)
+                for hand in self.hands.values():
+                    hand.start(sink)
             self.cameras.start()
             self.runtime.start()
             self._shadow_chunk_end_ns = time.monotonic_ns()
@@ -239,6 +257,7 @@ class TianjiRailEnv:
                             if sample.payload.joint_names != JOINT_NAMES or q.shape != (20,) or not np.isfinite(q).all():
                                 raise RuntimeError(f"{side}: invalid measured hand joints")
                             self._append(f"hands/{side}", sample.header.received_monotonic_ns, q)
+                    self._log_measured()
                 if self.runtime.active or self.runtime.sync_waiting:
                     problem = self.health_problem()
                     if problem:
@@ -263,6 +282,37 @@ class TianjiRailEnv:
                     return f"{key}: missing/stale history"
         return None
 
+    def latest_measured(self):
+        """Latest FK poses and hand joints already stored by the collector. No new FK."""
+        with self._lock:
+            sample = {}
+            for key in ("arms/left", "arms/right", "hands/left", "hands/right"):
+                history = self.histories[key]
+                if not history:
+                    return None
+                stamp, value = history[-1]
+                sample[key.replace("/", "_")] = {"stamp_ns": int(stamp),
+                                                 "value": np.asarray(value, dtype=np.float64).copy()}
+            return sample
+
+    def _log_measured(self):
+        if not self.record_observations or self.recorder is None or time.monotonic() < self._measured_log_at:
+            return
+        self._measured_log_at = time.monotonic() + 1. / self.config["policy_hz"]
+        measured = self.latest_measured()
+        if measured is not None:
+            self.emit("measured", **measured)
+
+    def feedback_since(self, since_ns):
+        """Copy actual flange poses and hand joints at or after ``since_ns``. No new FK."""
+        since_ns = int(since_ns)
+        with self._lock:
+            def take(key):
+                return [(int(stamp), np.asarray(value, dtype=np.float64).copy())
+                        for stamp, value in self.histories[key] if stamp >= since_ns]
+            return {"arms": {side: take(f"arms/{side}") for side in SIDES},
+                    "hands": {side: take(f"hands/{side}") for side in SIDES}}
+
     def latest_anchor_ns(self):
         """The anchor get_obs would align to, without health checks or image copies."""
         with self._lock:
@@ -281,33 +331,95 @@ class TianjiRailEnv:
             histories = {key: list(history) for key, history in self.histories.items()}
         return align_observation(histories, self.n_obs_steps, self.config, now_ns=time.monotonic_ns())
 
-    def engage(self):
+    def confirm_return_home(self):
+        """Ask before moving. False means the operator cancelled and nothing moved."""
+        import home_tianji_rail as home
+        print("推理开始前会先回初始位：双臂回到 ready_pose，双手回到示范起点。回位不下发策略动作。")
+        with home.MotionTerminal() as terminal:
+            return home.confirm_motion(terminal)
+
+    def _return_home(self, terminal):
+        import home_tianji_rail as home
+        from diffusion_policy.real_world.hand_settle import settle_and_hold
+        try:
+            home.home_connected_arms(self.driver, self.arm_settings, terminal)
+            if self._hand_hold is not None and self._hand_hold.running:
+                print("双手继续保持示范起点。")
+            else:
+                self.stop_hand_hold(raise_error=False)
+                goals = {side: home.hand_home_rad(side) for side in SIDES}
+                settle_and_hold(self, goals, np.deg2rad(5.), terminal.read,
+                                duration_s=3., settle_timeout_s=2., goal_name="示范起点")
+        except BaseException:
+            self.stop_hand_hold(raise_error=False)
+            for hand in self.hands.values():
+                try:
+                    if getattr(hand, "enabled", False):
+                        hand.disable("return home failed")
+                except Exception:
+                    pass
+            try:
+                if getattr(self.driver, "engaged", False):
+                    self.driver.request_hold("return home failed")
+            except Exception:
+                pass
+            raise
+
+    def engage(self, *, home=False):
         if not self.motion:
             raise RuntimeError("Shadow mode cannot engage devices")
         if any(self.config["workspace"][side] is None for side in SIDES):
             raise ValueError("Fill both measured workspaces before motion")
-        obs, _, _ = self.get_obs()
-        self.runtime.seed(np.r_[obs["robot_eef_pose"][-1], obs["hand_joint"][-1]])
+        seeded = False
         try:
-            for hand in self.hands.values():
-                if hand.profile is None:
-                    hand.configure(self.hand_profile)
-                hand.engage()
-            if self.driver.profile is None:
-                self.arm.configure(self.arm_profile)
-            self.arm.engage()
-            # Use the exact arm engagement reference, not a previous aligned camera pose.
-            seed = np.concatenate([np.r_[self.arm.engagement_poses[side].position_m,
-                       Rotation.from_quat(self.arm.engagement_poses[side].orientation_xyzw).as_rotvec()]
-                       for side in SIDES] + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
-            self.runtime.seed(seed, arm_ready=True)
+            if home:
+                import home_tianji_rail as home
+                # The finger hold keeps streaming until the policy runtime takes the same pose.
+                with self.runtime.suppress_commands():
+                    with home.MotionTerminal() as terminal:
+                        self._return_home(terminal)
+                    self._enable_devices(position_mode_configure=True)
+                    seeded = True
+                    self.stop_hand_hold()
+            else:
+                obs, _, _ = self.get_obs()
+                self.stop_hand_hold()
+                self.runtime.seed(np.r_[obs["robot_eef_pose"][-1], obs["hand_joint"][-1]])
+                seeded = True
+                self._enable_devices(position_mode_configure=False)
         except Exception as error:
+            if self._hand_hold is None and not seeded:
+                for hand in self.hands.values():
+                    try:
+                        if getattr(hand, "enabled", False):
+                            hand.disable("engagement failed")
+                    except Exception:
+                        pass
             self.runtime.pause(error, fault=True)
             raise
 
-    def exec_actions(self, actions, anchor_ns):
+    def _enable_devices(self, *, position_mode_configure):
+        for hand in self.hands.values():
+            if hand.profile is None:
+                hand.configure(self.hand_profile)
+            hand.engage()
+        profile_id = getattr(self.driver.profile, "profile_id", None)
+        if profile_id != self.arm_profile.profile_id:
+            if position_mode_configure and profile_id is not None:
+                print("机械臂保持位置力矩，并切换到推理控制参数。双手保持示范起点。")
+                self.arm.configure(self.arm_profile, require_impedance=False)
+            else:
+                self.arm.configure(self.arm_profile)
+        self.arm.engage()
+        # Use the exact arm engagement reference, not a previous aligned camera pose.
+        seed = np.concatenate([np.r_[self.arm.engagement_poses[side].position_m,
+                   Rotation.from_quat(self.arm.engagement_poses[side].orientation_xyzw).as_rotvec()]
+                   for side in SIDES] + [np.asarray(self.hands[side].last_target.position_rad) for side in SIDES])
+        self.runtime.seed(seed, arm_ready=True)
+
+    def exec_actions(self, actions, anchor_ns, prediction_id=None):
         if self.motion:
-            return self.runtime.submit(actions, anchor_ns)
+            return self.runtime.submit(actions, anchor_ns, prediction_id=prediction_id)
         if self.config["inference_mode"] == "sync":
             selected, times, dropped = retimed_actions(actions, time.monotonic_ns(),
                 self.config["policy_hz"], self.config["submit_margin_s"])
@@ -328,8 +440,20 @@ class TianjiRailEnv:
         self._shadow_chunk_end_ns = time.monotonic_ns()
         self.runtime.pause(reason)
 
+    def stop_hand_hold(self, *, raise_error=True):
+        hold = self._hand_hold
+        self._hand_hold = None
+        if hold is None:
+            return
+        hold.stop()
+        if raise_error and hold.error is not None:
+            raise RuntimeError(str(hold.error))
+
     def close(self):
-        self._stop.set()
+        try:
+            self.stop_hand_hold(raise_error=False)
+        finally:
+            self._stop.set()
         if self._collector is not None:
             self._collector.join(timeout=2)
         try:

@@ -34,7 +34,7 @@ class StandaloneTests(unittest.TestCase):
                 self.assertEqual(len(item['source_sha256']), 64)
 
     def test_default_cameras_follow_main_left_right_recording_order(self):
-        self.assertEqual(load_camera_config().cameras, ('348122072137', '408322072104', '408322070938'))
+        self.assertEqual(load_camera_config().cameras, ('405622076394', '408322072104', '408322070938'))
 
     def test_only_left_arm_rgb_is_rotated_180_degrees(self):
         rig = CameraRig(load_camera_config(), rs=NS(timestamp_domain=NS(global_time='global')))

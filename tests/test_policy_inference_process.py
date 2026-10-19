@@ -10,7 +10,7 @@ import numpy as np
 import diffusion_policy.real_world.policy_inference_process as module
 
 
-def echo_worker(connection, checkpoint, device):
+def echo_worker(connection, checkpoint, device, capture_rng=False):
     connection.send({"ok": True, "preflight": {"scope": "fake model, no devices"}})
     count = 0
     try:
@@ -78,6 +78,12 @@ class PolicyInferenceProcessTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertFalse(client._process.is_alive())
         self.assertTrue(failures)
+
+    def test_cpu_rng_snapshot_leaves_cuda_absent(self):
+        snapshot = module._rng_snapshot("cpu")
+        self.assertIsNone(snapshot["cuda"])
+        self.assertEqual(snapshot["device"], "cpu")
+        self.assertGreater(snapshot["cpu"].nbytes, 0)
 
 
 if __name__ == "__main__":

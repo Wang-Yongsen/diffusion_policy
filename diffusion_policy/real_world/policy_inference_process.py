@@ -1,7 +1,9 @@
 """Run model preprocessing and GPU inference outside the device-control GIL."""
 
 import multiprocessing as mp
+from pathlib import Path
 import signal
+import sys
 import threading
 import time
 import traceback
@@ -10,10 +12,24 @@ import torch
 from threadpoolctl import threadpool_limits
 
 
-def _inference_worker(connection, checkpoint, device):
+def _rng_snapshot(device):
+    """Generator state before sampling. A CPU run leaves CUDA explicitly absent."""
+    snapshot = {"cpu": torch.get_rng_state().detach().cpu().numpy().copy(), "cuda": None, "device": str(device)}
+    if str(device).startswith("cuda") and torch.cuda.is_available():
+        index = torch.device(device)
+        if index.index is None:
+            index = torch.device("cuda", torch.cuda.current_device())
+        snapshot["cuda"] = torch.cuda.get_rng_state(index).detach().cpu().numpy().copy()
+    return snapshot
+
+
+def _inference_worker(connection, checkpoint, device, capture_rng=False):
     # The parent owns terminal interrupts, devices and their stop path.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
+        root = str(Path(__file__).resolve().parents[2])
+        if root not in sys.path:
+            sys.path.insert(0, root)
         from eval_tianji_rail import check_inference, load_policy
         from diffusion_policy.real_world.tianji_rail_env import preprocess_observation
         with threadpool_limits(limits=1):
@@ -29,6 +45,13 @@ def _inference_worker(connection, checkpoint, device):
                     policy.reset()
                     connection.send({"ok": True})
                     continue
+                if command == "reseed":
+                    torch.manual_seed(int(payload))
+                    if str(device).startswith("cuda"):
+                        torch.cuda.manual_seed(int(payload))
+                    policy.reset()
+                    connection.send({"ok": True})
+                    continue
                 if command != "predict":
                     raise ValueError(f"Unknown inference command: {command}")
                 received = time.monotonic_ns()
@@ -37,10 +60,11 @@ def _inference_worker(connection, checkpoint, device):
                 tensor_obs = {key: torch.from_numpy(value).unsqueeze(0).to(policy.device)
                               for key, value in prepared.items()}
                 inputs_ready = time.monotonic_ns()
+                rng = _rng_snapshot(device) if capture_rng else None
                 with torch.inference_mode():
                     actions = policy.predict_action(tensor_obs)["action"].detach().cpu().numpy()
                 returned = time.monotonic_ns()
-                connection.send({"ok": True, "actions": actions, "timing": {
+                connection.send({"ok": True, "actions": actions, "rng": rng, "timing": {
                     "received_ns": received, "preprocessed_ns": preprocessed,
                     "inputs_ready_ns": inputs_ready, "returned_ns": returned}})
     except (EOFError, BrokenPipeError):
@@ -57,14 +81,16 @@ def _inference_worker(connection, checkpoint, device):
 class PolicyInferenceProcess:
     """One in-flight observation; a fresh CUDA process never controls devices."""
 
-    def __init__(self, checkpoint, device, *, startup_timeout_s=60., request_timeout_s=10.):
+    def __init__(self, checkpoint, device, *, startup_timeout_s=60., request_timeout_s=10., capture_rng=False):
         self._closed = threading.Event()
         self._lock = threading.Lock()
         self._request_timeout_s = request_timeout_s
         self.last_timing = None
+        self.last_rng = None
         context = mp.get_context("spawn")
         self._connection, child = context.Pipe()
-        self._process = context.Process(target=_inference_worker, args=(child, str(checkpoint), str(device)),
+        self._process = context.Process(target=_inference_worker,
+                                        args=(child, str(checkpoint), str(device), bool(capture_rng)),
                                         name="policy-inference", daemon=True)
         self._process.start()
         child.close()
@@ -104,7 +130,14 @@ class PolicyInferenceProcess:
             result = self._receive(self._request_timeout_s)
             self.last_timing = {**result["timing"], "request_started_ns": started,
                                 "request_sent_ns": sent, "response_received_ns": time.monotonic_ns()}
+            self.last_rng = result.get("rng")
             return {"action": torch.from_numpy(result["actions"])}
+
+    def reseed(self, seed):
+        """Explicit batch-only reset after warmup/initialization, before formal decision 0."""
+        with self._lock:
+            self._connection.send(("reseed", int(seed)))
+            self._receive(self._request_timeout_s)
 
     def close(self):
         if self._closed.is_set():

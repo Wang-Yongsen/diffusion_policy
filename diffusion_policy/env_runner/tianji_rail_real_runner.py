@@ -103,6 +103,23 @@ class TrialRecorder:
         with self._drop_lock:
             self.dropped += 1
 
+    def snapshot(self, name, *, anchor_ns, prediction_index, **arrays):
+        """Queue one observation window. The writer thread compresses it off the control loops."""
+        if self._closed:
+            return
+        payload = {"event": "observation_snapshot", "name": str(name), "anchor_ns": int(anchor_ns),
+                   "prediction_index": int(prediction_index), "monotonic_ns": time.monotonic_ns(),
+                   "_arrays": {key: np.array(value, copy=True) for key, value in arrays.items()}}
+        if self.error:
+            with self._drop_lock:
+                self.dropped += 1
+            return
+        try:
+            self._queue.put_nowait(payload)
+        except Full:
+            with self._drop_lock:
+                self.dropped += 1
+
     def _write(self):
         try:
             with (self.path / "events.jsonl").open("w") as file:
@@ -110,6 +127,11 @@ class TrialRecorder:
                     item = self._queue.get()
                     if item is None:
                         break
+                    arrays = item.pop("_arrays", None)
+                    if arrays is not None:
+                        filename = f"{Path(str(item['name'])).name}.npz"
+                        np.savez_compressed(self.path / filename, **arrays)
+                        item["file"] = filename
                     file.write(json.dumps(item, default=json_value, ensure_ascii=False, allow_nan=False) + "\n")
         except Exception as error:
             self.error = f"Trial writer failed: {error}"
@@ -146,39 +168,81 @@ def summarize_trials(output):
 
 
 class TianjiRailRealRunner:
-    def __init__(self, env, policy, checkpoint_config, metadata, output_dir):
+    def __init__(self, env, policy, checkpoint_config, metadata, output_dir, *, record_observations=False, trace=None):
         self.env, self.policy, self.cfg = env, policy, checkpoint_config
+        self.record_observations = bool(record_observations) and trace is None
+        self.trace = trace
         self.metadata = metadata
         self.output = Path(output_dir)
-        self.output.mkdir(parents=True, exist_ok=False)
+        self.output.mkdir(parents=True, exist_ok=True)
+        if any(self.output.glob("trial_*")) or (self.output / "session.json").exists():
+            raise FileExistsError(f"Evaluation output already contains a trial: {self.output}")
         write_json(self.output / "session.json", metadata)
         self._stop = threading.Event()
         self._enabled = threading.Event()
         self._inference_lock = threading.Lock()
         self._generation = 0
+        self._snapshot_index = 0
         self._trial = None
         self._started = None
         self._count = 0
         self.error = None
+        self.batch_hooks = None
+        self._batch_stop_reason = None
 
     def _begin(self):
         if self._trial is not None:
             return
+        # Batch slots home to their frozen start with --mode home. A normal motion
+        # trial homes to ready_pose and the demonstration hand pose before inference.
+        should_home = bool(self.env.motion and self.batch_hooks is None)
+        if should_home and not self.env.confirm_return_home():
+            print("已取消回位，未开始推理。")
+            return
         self._count += 1
+        self._snapshot_index = 0
         self._trial = TrialRecorder(self.output / f"trial_{self._count:04d}",
             {**self.metadata, "mode": "motion" if self.env.motion else "shadow",
+             "record_observations": self.record_observations, "trace": self.trace is not None,
              "started_monotonic_ns": time.monotonic_ns()}, self.env.config["record_queue_capacity"])
         self.env.recorder = self._trial
-        self._started = time.monotonic()
         self._generation += 1
         self.error = None
         try:
+            if self.env.motion and self.batch_hooks is not None and self.batch_hooks.check_init is not None:
+                report = self.batch_hooks.check_init(self.env)
+                self.batch_hooks.init_report = report
+                if not report.get("comparable"):
+                    self._batch_stop_reason = "initialization mismatch"
+                    self.env.recorder = None
+                    trial, self._trial = self._trial, None
+                    if trial is not None:
+                        trial.close("invalid_comparison", "initialization mismatch")
+                    print("初始化超出冻结容差，本段记为无效比较，未接合。")
+                    return
+            if self.trace is not None and not self.trace.decisions_ready:
+                obs, _, _ = self.env.get_obs()
+                self.trace.allocate_decisions(obs, self._n_action_steps(), capture_real=False)
+                print(f"完整记录缓冲：{self.trace.decision_capacity} 次决策，图像约 {self.trace.image_mebibytes:.0f} MiB。"
+                      "缓冲满会把本段标为无效，不会停住控制。")
+            if self.trace is not None:
+                self.trace.begin_trial()
             if self.env.motion:
-                self.env.engage()
+                self.env.engage(home=should_home)
+            # The limit covers inference and execution, not the preceding home move.
+            self._started = time.monotonic()
             # Inference/reset are serialized inside the worker, never in the control loops.
             with self._inference_lock:
+                if self.metadata.get("batch_seed") is not None:
+                    self.policy.reseed(int(self.metadata["batch_seed"]))
                 self._enabled.set()
         except Exception as error:
+            import home_tianji_rail as home
+            from diffusion_policy.real_world.hand_settle import HandSettleCancelled
+            if isinstance(error, (home.Cancelled, HandSettleCancelled)):
+                self._end("takeover", "Home cancelled")
+                print("已取消回位，未开始推理。")
+                return
             self._end("device_abort", str(error))
             print(f"试验未能开始：{error}")
 
@@ -193,6 +257,8 @@ class TianjiRailRealRunner:
                 trial, self._trial = self._trial, None
         if trial is not None:
             trial.close(outcome, reason)
+            if self.trace is not None:
+                self._flush_trace(trial.path)
             summarize_trials(self.output)
 
     def _infer(self):
@@ -219,6 +285,9 @@ class TianjiRailRealRunner:
                     if latest is None or latest <= completed:
                         self._stop.wait(.003)
                         continue
+                hold = self._before_observation()
+                if hold == "stop":
+                    return
                 started = time.monotonic_ns()
                 try:
                     obs, anchor, alignment = self.env.get_obs()
@@ -253,15 +322,42 @@ class TianjiRailRealRunner:
                         prediction = self.policy.predict_action(tensor_obs)
                 actions = prediction["action"][0].detach().cpu().numpy()
                 returned = time.monotonic_ns()
+                stability, submit = self._prediction_gate(hold, returned)
                 # A stopped/previous trial cannot publish into a new trial.
                 with self._inference_lock:
                     if generation != self._generation or not self._enabled.is_set():
                         continue
+                    prediction_id = None
+                    if self.trace is not None:
+                        prediction_id = self.trace.store_decision(
+                            obs=obs, alignment=alignment, anchor_ns=anchor, actions=actions,
+                            started_ns=started, observed_ns=observed, preprocessed_ns=preprocessed,
+                            inputs_ready_ns=inputs_ready, returned_ns=returned,
+                            rng=getattr(self.policy, "last_rng", None), control_input="real",
+                            live_capture_started_ns=started, live_capture_returned_ns=observed,
+                            stability=stability)
+                    observation = {} if self.trace is not None else self._observation_record(obs)
+                    if prediction_id is not None:
+                        observation = {**observation, "prediction_id": prediction_id}
+                    if stability is not None:
+                        observation = {**observation, "stability": stability}
                     self.env.emit("prediction", anchor_ns=anchor, started_ns=started, returned_ns=returned,
                                   observed_ns=observed, preprocessed_ns=preprocessed,
                                   inputs_ready_ns=inputs_ready, process_timing=process_timing,
-                                  actions=actions, alignment=alignment, chunk_completed_ns=completed)
-                    dropped = self.env.exec_actions(actions, anchor)
+                                  actions=actions, alignment=alignment, chunk_completed_ns=completed,
+                                  **observation)
+                    if not submit:
+                        self.env.emit("prediction_rejected", reason="post-inference excursion",
+                                      stability=stability)
+                        if self._batch_stop_reason:
+                            return
+                        continue
+                    if prediction_id is None:
+                        dropped = self.env.exec_actions(actions, anchor)
+                    else:
+                        dropped = self.env.exec_actions(actions, anchor, prediction_id=prediction_id)
+                    if self.trace is None:
+                        self._save_observation_window(obs, anchor)
                     self.env.emit("prediction_coverage", dropped_steps=dropped,
                                   remaining_steps=len(actions) - dropped)
                 anchor_previous = anchor
@@ -272,15 +368,109 @@ class TianjiRailRealRunner:
                     self._enabled.clear()
                     self.env.runtime.pause(error, fault=True)
 
+    def _batch_blocked(self):
+        hooks = self.batch_hooks
+        if self._batch_stop_reason:
+            return True
+        if hooks is None or self.trace is None:
+            return False
+        if self.trace.decision_count >= hooks.max_decisions:
+            self._batch_stop_reason = "decision cap"
+            self._enabled.clear()
+            return True
+        return False
+
+    def _before_observation(self):
+        if self._batch_blocked():
+            return "stop"
+        hooks = self.batch_hooks
+        if hooks is None or not hooks.stable:
+            return None
+        verdict = hooks.gate.wait_stable(
+            self.env.feedback_since, time.monotonic_ns, self._stop.wait,
+            lambda: self._enabled.is_set() and not self._stop.is_set() and self._batch_stop_reason is None)
+        public = {key: value for key, value in verdict.items() if key != "snapshot"}
+        self.env.emit("stability_wait", **public)
+        if not verdict["stable"]:
+            self._batch_stop_reason = verdict.get("reason") or "stability wait failed"
+            self._enabled.clear()
+            return "stop"
+        return verdict
+
+    def _prediction_gate(self, verdict, returned_ns):
+        from diffusion_policy.real_world.batch_factors import latest_snapshot
+        if not isinstance(verdict, dict):
+            return None, True
+        after = latest_snapshot(self.env.feedback_since(int(returned_ns) - int(0.25e9)))
+        post = self.batch_hooks.gate.postcheck(verdict.get("snapshot"), after)
+        if post["ok"]:
+            self.batch_hooks.gate.note_accept()
+        elif not self.batch_hooks.gate.note_reject():
+            self._batch_stop_reason = "post-inference excursion"
+            self._enabled.clear()
+        info = {"accepted": bool(post["ok"]), "resamples": self.batch_hooks.gate.resamples,
+                "wait": {key: value for key, value in verdict.items() if key != "snapshot"}, "post": post}
+        return info, bool(post["ok"])
+
+    def _n_action_steps(self):
+        preflight = getattr(self.policy, "preflight", None)
+        if isinstance(preflight, dict) and "n_action_steps" in preflight:
+            return int(preflight["n_action_steps"])
+        return int(self.policy.n_action_steps)
+
+    def _flush_trace(self, path):
+        try:
+            meta = self.trace.flush(path)
+        except Exception as error:
+            (Path(path) / "trace_flush_error.txt").write_text(str(error))
+            return
+        trial_path = Path(path) / "trial.json"
+        if trial_path.is_file() and meta is not None:
+            trial = json.loads(trial_path.read_text())
+            trial["trace_valid"] = meta["valid"]
+            trial["trace_invalid_reason"] = meta["invalid_reason"]
+            trial["trace_dropped"] = meta["dropped"]
+            write_json(trial_path, trial)
+            print("完整记录有效。" if meta["valid"] else f"完整记录无效：{meta['invalid_reason']}。不能据此判定根因。")
+
+    def _observation_record(self, obs):
+        if not self.record_observations:
+            return {}
+        index = self._snapshot_index
+        name = f"obs_{index:02d}" if index < 3 else f"obs_recent_{index % 3:02d}"
+        return {"observation_file": f"{name}.npz", "prediction_index": index,
+                "input_robot_eef_pose": np.asarray(obs["robot_eef_pose"], dtype=np.float32),
+                "input_hand_joint": np.asarray(obs["hand_joint"], dtype=np.float32),
+                "measured": self.env.latest_measured()}
+
+    def _save_observation_window(self, obs, anchor):
+        if not self.record_observations or self._trial is None:
+            return
+        index = self._snapshot_index
+        self._snapshot_index += 1
+        name = f"obs_{index:02d}" if index < 3 else f"obs_recent_{index % 3:02d}"
+        self._trial.snapshot(name, anchor_ns=anchor, prediction_index=index,
+                             camera_0=obs["camera_0"], camera_1=obs["camera_1"], camera_2=obs["camera_2"],
+                             robot_eef_pose=obs["robot_eef_pose"], hand_joint=obs["hand_joint"])
+
     def run(self):
         thread = threading.Thread(target=self._infer, name="policy-inference", daemon=True)
         thread.start()
         if not self.env.motion:
             self._begin()
         print("s 开始试验；p 暂停并记接管；y 成功；n 失败；q 退出（终端输入后按 Enter）。")
-        print("默认影子模式，不使能设备。" if not self.env.motion else "运动模式：每次仍需手动 s 开始。")
+        print("默认影子模式，不使能设备。" if not self.env.motion else
+              "运动模式：按 s 后先确认回初始位，到位后才接合并推理。回位中按 Q 取消。")
+        if self.trace is not None and self.env.motion:
+            print("出现明显偏离就可以停，不必凑满试验时限。有人递送导轨或扶机器人时，用 p 记下接管时间。")
         try:
             while not self._stop.wait(.02):
+                if self._batch_stop_reason:
+                    if self._trial is not None:
+                        kind = "invalid_comparison" if self._batch_stop_reason == "initialization mismatch" else "timeout"
+                        self._end(kind, self._batch_stop_reason)
+                        print(f"试验结束：{self._batch_stop_reason}")
+                    break
                 if self._trial is not None:
                     problem = self.error or self.env.error or self.env.runtime.fault
                     if not thread.is_alive():
@@ -290,7 +480,7 @@ class TianjiRailRealRunner:
                         print(f"试验中止：{problem}")
                         if not self.env.motion:
                             break
-                    elif time.monotonic() - self._started >= self.env.config["trial_timeout_s"]:
+                    elif self._started is not None and time.monotonic() - self._started >= self.env.config["trial_timeout_s"]:
                         self._end("timeout" if self.env.motion else "shadow", "Trial time limit")
                         if not self.env.motion:
                             break

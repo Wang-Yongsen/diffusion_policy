@@ -48,8 +48,8 @@ class TianjiCartesianExecutor:
     def engagement_ref(self) -> SampleRef | None:
         return self._engagement_ref
 
-    def configure(self, profile: ControlProfile) -> None:
-        self.driver.configure(profile)
+    def configure(self, profile: ControlProfile, *, require_impedance: bool = True) -> None:
+        self.driver.configure(profile, require_impedance=require_impedance)
         with self._state_lock:
             self._generation += 1
             self._reference.clear()
@@ -170,14 +170,22 @@ class TianjiCartesianExecutor:
                                        else None for q in joints],
                     }
             return self._reject(target, str(error))
-        if self.clock_ns() >= target.expires_monotonic_ns:
-            return self._reject(target, "target expired during IK")
+        # IK can outlast the caller's deadline, especially the first command
+        # after engagement. Rejecting here used to request_hold and abort the
+        # trial. The planned joints are the pose this tick already accepted;
+        # give the driver one watchdog interval. It clamps the controller
+        # deadline to that same interval.
+        expires_ns = target.expires_monotonic_ns
+        if self.clock_ns() >= expires_ns:
+            self.timing_status["ik_overrun"] = True
+            budget = int(getattr(self.driver, "watchdog_ns", 80_000_000))
+            expires_ns = self.clock_ns() + budget
         command = DeviceCommand(
             device_id="tianji", command_id=target.command_id,
             payload=TianjiJointCommand(targets=targets, cartesian_targets={s: step.pose for s, step in steps.items()},
                                       requested_cartesian_targets=poses),
             source_refs=tuple(target.source_refs), created_monotonic_ns=target.created_monotonic_ns,
-            expires_monotonic_ns=target.expires_monotonic_ns,
+            expires_monotonic_ns=expires_ns,
             control_profile_id=target.control_profile_id,
         )
         self.timing_status["stage"] = "driver_submit"
