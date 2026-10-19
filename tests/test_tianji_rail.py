@@ -12,9 +12,9 @@ from diffusion_policy.env_runner.tianji_rail_offline_runner import TianjiRailOff
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 
-def write_dataset(path, *, legacy=False):
+def write_dataset(path, *, legacy=False, action_space='eef'):
     root = zarr.open_group(str(path), mode='w')
-    root.attrs.update(schema_version=1 if legacy else 2, action_space='eef')
+    root.attrs.update(schema_version=1 if legacy else 2, action_space=action_space)
     data, meta = root.create_group('data'), root.create_group('meta')
     # First demonstration has a 20-frame segment and a 5-frame short segment.
     meta.array('episode_ends', np.asarray([20, 25, 45] if legacy else [25, 45], np.int64))
@@ -22,8 +22,9 @@ def write_dataset(path, *, legacy=False):
         meta.array('segment_ends', np.asarray([20, 25, 45], np.int64))
     meta.attrs['segments'] = [{'source_episode': s} for s in ('a', 'a', 'b')]
     timeline = np.arange(45, dtype=np.float32) / 100
-    data.array('action', np.repeat(timeline[:, None], 52, axis=1))
+    data.array('action', np.repeat(timeline[:, None], 52 if action_space == 'eef' else 54, axis=1))
     data.array('robot_eef_pose', np.repeat(timeline[:, None], 12, axis=1))
+    data.array('robot_joint', np.repeat(timeline[:, None], 14, axis=1))
     data.array('hand_joint', np.repeat(timeline[:, None], 40, axis=1))
     # Distinct channels and a spatial pattern expose transpose/resize errors.
     images = np.zeros((45, 12, 16, 3), np.uint8)
@@ -141,6 +142,30 @@ class TianjiRailTests(unittest.TestCase):
         np.testing.assert_allclose(errors['left_rotation_deg'], 0, atol=1e-12)
         np.testing.assert_allclose(errors['right_rotation_deg'], 90)
         np.testing.assert_allclose(errors['left_hand_joint_mae_deg'], 1)
+
+    def test_joint_action_space_dataset_metrics_and_mismatch(self):
+        path = Path(self.temp.name) / 'joint.zarr'
+        write_dataset(path, action_space='joint')
+        shape = (3, 6, 8)
+        obs = {key: {'shape': shape, 'type': 'rgb'} for key in ('camera_0', 'camera_1', 'camera_2')}
+        obs.update(robot_joint={'shape': [14]}, hand_joint={'shape': [40]})
+        meta = {'obs': obs, 'action': {'shape': [54]}}
+        dataset = TianjiRailImageDataset(path, meta, image_shape=shape, action_space='joint', val_ratio=.5)
+        self.assertEqual(dataset[0]['action'].shape, (16, 54))
+        self.assertEqual(dataset[0]['obs']['robot_joint'].shape, (2, 14))
+        with self.assertRaisesRegex(ValueError, 'action_space=joint does not match'):
+            make_dataset(path)
+        with self.assertRaisesRegex(ValueError, 'action_space=eef does not match'):
+            TianjiRailImageDataset(self.path, meta, image_shape=shape, action_space='joint')
+        target = np.zeros((2, 8, 54))
+        prediction = target.copy()
+        prediction[..., 7:14] = np.pi/90
+        prediction[..., 14:34] = np.pi/180
+        errors = action_errors(prediction, target, 'joint')
+        np.testing.assert_allclose(errors['left_arm_joint_mae_deg'], 0, atol=1e-12)
+        np.testing.assert_allclose(errors['right_arm_joint_mae_deg'], 2)
+        np.testing.assert_allclose(errors['left_hand_joint_mae_deg'], 1)
+        np.testing.assert_allclose(errors['right_hand_joint_mae_deg'], 0, atol=1e-12)
 
     def test_runner_execution_alignment_report_and_empty_validation(self):
         policy = IndexedPolicy()

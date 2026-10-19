@@ -70,14 +70,14 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_smoke_work
 
 ```bash
 python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace \
-  "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place_10hz.zarr"
+  "task.dataset.dataset_path=/path/to/dataset.zarr"
 ```
 
 启动前核对以下参数；当前值适用时无需重复写到命令行：
 
 | 配置参数                                         | 当前值               | 何时修改                                                                                |
 | ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
-| `task.sample_hz`                               | `10`               | 数据采样频率改变时同步修改，须与Zarr的`target_fps` 一致                               |
+| `task.sample_hz`                               | `30`               | 数据采样频率改变时同步修改，须与Zarr的`target_fps` 一致                               |
 | `task.dataset.val_ratio`                       | `0.05`             | 调整按独立演示来源留出的验证比例；单条演示设为`0`                                     |
 | `dataloader.batch_size`                        | `64`               | 按显存容量调整每批样本数，显存不足时减小                                                |
 | `dataloader.num_workers`                       | `4`                | 按数据读取速度调整；设为`0` 时同时将 `dataloader.persistent_workers` 设为 `false` |
@@ -88,6 +88,19 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 上述参数也可作为 `参数名=值` 追加到同一条命令，例如 `training.num_epochs=100`，只覆盖本次运行。输入图像设置见本节前面的说明。
 
 从头训练使用 `training.resume=false`（默认值），输出目录按启动时间自动命名。更换数据频率时新建实验，重新训练对应频率的模型；同一实验中断后的继续训练见下节。
+
+### 关节版训练
+
+Zarr 的 `action_space` 为 `joint` 时，使用关节版配置；末端版配置会拒绝这类数据。关节版观测为三路RGB、14维机械臂关节和40维手关节，动作为54维绝对关节目标（左臂7、右臂7、左手20、右手20，弧度）；其余训练参数继承正式训练配置，任务设置见[关节版任务配置](../../diffusion_policy/config/task/tianji_rail_joint_image.yaml)。离线评估报告各臂和各手的关节平均绝对误差，单位为度。真机部署目前只支持末端版模型。
+
+```bash
+python train.py --config-name=train_diffusion_transformer_tianji_rail_joint_smoke_workspace \
+  "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place3_joint_30hz.zarr"
+python train.py --config-name=train_diffusion_transformer_tianji_rail_joint_workspace \
+  "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place3_joint_30hz.zarr"
+```
+
+输出目录默认为 `data/outputs/年.月.日/时.分.秒_tianji_rail_joint/`；恢复训练时同样使用关节版配置名。
 
 ### 恢复训练
 

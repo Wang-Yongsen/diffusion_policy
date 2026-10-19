@@ -7,22 +7,30 @@ import torch
 from scipy.spatial.transform import Rotation
 from torch.utils.data import DataLoader, Subset
 
+from diffusion_policy.dataset.tianji_rail_image_dataset import ACTION_DIMS
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 
 
-def action_errors(prediction, target):
-    """One error per prediction step, using SO(3) distance for rotations."""
-    if prediction.shape != target.shape or prediction.shape[-1] != 52:
-        raise ValueError("Predictions and targets must have identical (...,52) shapes")
+def action_errors(prediction, target, action_space="eef"):
+    """One error per prediction step, using SO(3) distance for EEF rotations."""
+    dim = ACTION_DIMS[action_space]
+    if prediction.shape != target.shape or prediction.shape[-1] != dim:
+        raise ValueError(f"Predictions and targets must have identical (...,{dim}) shapes")
     if not np.isfinite(prediction).all() or not np.isfinite(target).all():
         raise ValueError("Nonfinite action prediction or target")
     result = {}
-    for side, offset in (("left", 0), ("right", 6)):
-        result[f"{side}_position_mm"] = np.linalg.norm(prediction[..., offset:offset+3] - target[..., offset:offset+3], axis=-1) * 1000
-        a = Rotation.from_rotvec(prediction[..., offset+3:offset+6].reshape(-1, 3))
-        b = Rotation.from_rotvec(target[..., offset+3:offset+6].reshape(-1, 3))
-        result[f"{side}_rotation_deg"] = np.rad2deg((a.inv() * b).magnitude()).reshape(target.shape[:-1])
-    for side, offset in (("left", 12), ("right", 32)):
+    if action_space == "eef":
+        for side, offset in (("left", 0), ("right", 6)):
+            result[f"{side}_position_mm"] = np.linalg.norm(prediction[..., offset:offset+3] - target[..., offset:offset+3], axis=-1) * 1000
+            a = Rotation.from_rotvec(prediction[..., offset+3:offset+6].reshape(-1, 3))
+            b = Rotation.from_rotvec(target[..., offset+3:offset+6].reshape(-1, 3))
+            result[f"{side}_rotation_deg"] = np.rad2deg((a.inv() * b).magnitude()).reshape(target.shape[:-1])
+        hand_offsets = (("left", 12), ("right", 32))
+    else:
+        for side, offset in (("left", 0), ("right", 7)):
+            result[f"{side}_arm_joint_mae_deg"] = np.rad2deg(np.abs(prediction[..., offset:offset+7] - target[..., offset:offset+7])).mean(axis=-1)
+        hand_offsets = (("left", 14), ("right", 34))
+    for side, offset in hand_offsets:
         result[f"{side}_hand_joint_mae_deg"] = np.rad2deg(np.abs(prediction[..., offset:offset+20] - target[..., offset:offset+20])).mean(axis=-1)
     return result
 
@@ -66,7 +74,7 @@ class TianjiRailOfflineRunner(BaseImageRunner):
                     prediction = policy.predict_action(obs)["action"].cpu().numpy()
                     first = self.dataset.n_obs_steps - 1
                     target = batch["action"][:, first:first+self.n_action_steps].numpy()
-                    errors = action_errors(prediction, target)
+                    errors = action_errors(prediction, target, self.dataset.action_space)
                     for row in range(len(target)):
                         index = self.selected[cursor]
                         start, segment = self.dataset.indices[index]

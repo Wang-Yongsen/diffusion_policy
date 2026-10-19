@@ -12,11 +12,17 @@ from diffusion_policy.common.normalize_util import get_image_range_normalizer
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 
+# eef: arm flange xyz+rotvec 6+6, hands 20+20; joint: arms 7+7, hands 20+20.
+ACTION_DIMS = {"eef": 52, "joint": 54}
+
 
 class TianjiRailImageDataset(BaseImageDataset):
     def __init__(self, dataset_path, shape_meta, horizon=16, n_obs_steps=2,
                  seed=42, val_ratio=0., image_shape=(3, 240, 320),
-                 resize_enabled=True, resize_interpolation="area", sample_hz=None):
+                 resize_enabled=True, resize_interpolation="area", sample_hz=None,
+                 action_space="eef"):
+        if action_space not in ACTION_DIMS:
+            raise ValueError("action_space must be eef or joint")
         if type(horizon) is not int or type(n_obs_steps) is not int or not 1 <= n_obs_steps <= horizon:
             raise ValueError("Require 1 <= n_obs_steps <= horizon, both integers")
         if not 0 <= val_ratio < 1:
@@ -37,10 +43,13 @@ class TianjiRailImageDataset(BaseImageDataset):
         self.image_shape = tuple(image_shape)
         self.rgb_keys, self.lowdim_keys = [], []
         count = len(self.data["action"])
-        if tuple(shape_meta["action"]["shape"]) != (52,) or self.data["action"].shape != (count, 52):
-            raise ValueError("Tianji rail requires 52-D EEF actions")
-        if self.root.attrs.get("action_space", "eef") != "eef":
-            raise ValueError("Tianji rail requires action_space=eef")
+        dim = ACTION_DIMS[action_space]
+        stored_space = self.root.attrs.get("action_space", "eef")
+        if stored_space != action_space:
+            raise ValueError(f"Dataset action_space={stored_space} does not match configured action_space={action_space}")
+        if tuple(shape_meta["action"]["shape"]) != (dim,) or self.data["action"].shape != (count, dim):
+            raise ValueError(f"Tianji rail action_space={action_space} requires {dim}-D actions")
+        self.action_space = action_space
         for key, spec in shape_meta["obs"].items():
             if key == "action" or key not in self.data:
                 raise ValueError(f"Missing or invalid observation: {key}")
