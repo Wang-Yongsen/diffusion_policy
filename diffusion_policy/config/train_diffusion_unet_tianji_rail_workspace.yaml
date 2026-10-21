@@ -1,0 +1,66 @@
+# 导轨 UNet：复用已有 DDIM UNet，实现与 Transformer 相同的数据和评估接口。
+defaults:
+  - train_diffusion_unet_ddim_hybrid_workspace
+  - override task: tianji_rail_image
+  - _self_
+
+name: train_diffusion_unet_tianji_rail
+_target_: diffusion_policy.workspace.train_diffusion_unet_tianji_rail_workspace.TrainDiffusionUnetTianjiRailWorkspace
+
+# 默认30 Hz、2帧观测、预测16步、执行8步；频率由 task.sample_hz 指定。
+# horizon 保持为4的倍数，匹配三层UNet的两次时间下采样。
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+n_latency_steps: 0
+
+policy:
+  # UNet沿动作时间轴去噪，三路RGB继续使用ResNet18编码器。
+  # 继承DDIM 100个训练噪声时间步、8次推理、全局观测条件和GroupNorm。
+  crop_shape: null
+  diffusion_step_embed_dim: 128
+  down_dims: [256, 512, 1024]
+  kernel_size: 5
+  n_groups: 8
+
+dataloader:
+  batch_size: 64
+  num_workers: 4
+  persistent_workers: true
+val_dataloader:
+  batch_size: ${dataloader.batch_size}
+  num_workers: ${dataloader.num_workers}
+  pin_memory: ${dataloader.pin_memory}
+  persistent_workers: ${dataloader.persistent_workers}
+
+optimizer:
+  # UNet使用标准AdamW；学习率参数是 optimizer.lr。
+  lr: 0.0001
+  betas: [0.9, 0.95]
+  weight_decay: 0.000001
+
+training:
+  resume: false
+  num_epochs: 600
+  rollout_every: 50
+  checkpoint_every: 10
+  val_every: 5
+  sample_every: 5
+
+logging:
+  mode: disabled
+  project: tianji_rail
+  resume: false
+  name: ${name}
+
+checkpoint:
+  topk:
+    monitor_key: '${eval:"\"val_loss\" if ${task.dataset.val_ratio} > 0 else \"train_loss\""}'
+    mode: min
+    k: 3
+    format_str: 'epoch={epoch:04d}.ckpt'
+
+hydra:
+  run:
+    # 网络名与动作空间同时进入目录名，区分Transformer和UNet实验。
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_tianji_rail_unet_${task.action_space}

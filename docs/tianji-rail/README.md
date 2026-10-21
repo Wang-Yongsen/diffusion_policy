@@ -1,4 +1,3 @@
-
 # 汽车导轨任务快速使用
 
 本项目负责模型训练、离线评估和真机评估；数据采集、整理和转换在 [bimanual-teleop](../../../bimanual-teleop/README.md) 中完成。模型分两种动作空间：**末端版**（`eef`）使用三路RGB、双臂末端位姿和双手关节，预测52维动作；**关节版**（`joint`）使用三路RGB、双臂关节和双手关节，预测54维动作。两者共用同一套训练配置和部署配置，训练时用命令行参数选择动作空间，部署时从 checkpoint 自动识别。构建状态见[分阶段计划](../../plan/tianji-rail-build-plan.md)。
@@ -34,7 +33,7 @@ python -c "import sys; print(sys.executable)"
 
 **每次启动训练都在命令行指定 `task.dataset.dataset_path`，选择本次使用的 `.zarr` 数据集。** 路径可以是绝对路径，也可以相对于 `diffusion_policy` 项目根目录。配置文件中的路径只是预设值，按下方模板在每次运行时覆盖。Dataset负责来源划分、连续片段内采样及训练集归一化。
 
-当前[任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)为 `task.sample_hz=30`，要求训练数据采样频率为30 Hz；10 Hz数据在命令行加 `task.sample_hz=10`。该参数同时传给 Dataset，并保存到 checkpoint。训练启动会校验Zarr的 `target_fps` 和连续片段内的时间间隔。真机部署的 `policy_hz` 必须与 checkpoint 的频率相同（部署配置默认10，30 Hz模型加 `--set policy_hz=30`，见第5节）；不能仅修改已有Zarr的频率属性。
+当前[任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)为 `task.sample_hz=30`，要求训练数据采样频率为30 Hz；10 Hz数据在命令行加 `task.sample_hz=10`。该参数同时传给 Dataset，并保存到 checkpoint。训练启动会校验Zarr的 `target_fps` 和连续片段内的时间间隔。真机部署的 `policy_hz` 必须与 checkpoint 的频率相同（部署配置默认30，10 Hz模型加 `--set policy_hz=10`，见第5节）；不能仅修改已有Zarr的频率属性。
 
 两种动作空间的数据契约如下，由Zarr根属性 `action_space` 标明；位置用米，旋转向量和关节角用弧度，动作均为绝对目标：
 
@@ -49,17 +48,19 @@ python -c "import sys; print(sys.executable)"
 
 **训练数据路径每次在命令行指定，其余参数使用 YAML 中的设置，按需修改。** 命令行参数优先于 YAML，只对本次运行生效。长期使用的参数在配置文件修改：
 
-| 配置文件                                                                                                | 内容                                                                                                 |
-| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)                                    | 动作空间、两种动作空间的观测和动作契约、数据采样频率、验证比例、图像预处理；数据路径在每次运行时覆盖 |
-| [正式训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_workspace.yaml)     | 默认每批64个样本、4个读取进程、600轮、每轮完整训练                                                   |
-| [短训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_smoke_workspace.yaml) | 继承正式配置，每批2个样本、0个读取进程、每轮2批、共2轮，用于检查流程                                 |
+| 配置文件                                                                                                           | 内容                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [任务配置](../../diffusion_policy/config/task/tianji_rail_image.yaml)                                               | 动作空间、两种动作空间的观测和动作契约、数据采样频率、验证比例、图像预处理；数据路径在每次运行时覆盖 |
+| [Transformer正式训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_workspace.yaml)     | 默认每批64个样本、4个读取进程、600轮、每轮完整训练                                                   |
+| [Transformer短训练配置](../../diffusion_policy/config/train_diffusion_transformer_tianji_rail_smoke_workspace.yaml) | 继承正式配置，每批2个样本、0个读取进程、每轮2批、共2轮，用于检查流程                                 |
+| [UNet正式训练配置](../../diffusion_policy/config/train_diffusion_unet_tianji_rail_workspace.yaml)                   | 使用UNet去噪网络，支持末端版与关节版，默认600轮                                                      |
+| [UNet短训练配置](../../diffusion_policy/config/train_diffusion_unet_tianji_rail_smoke_workspace.yaml)               | 同一UNet，每批2个样本、每轮最多2批、共2轮                                                            |
 
 当前按原图训练：`task.image_shape=[3,480,640]`、`task.dataset.resize_enabled=false`、`policy.crop_shape=null`，保留宽640、高480的整幅图像。改变输入尺寸后新建实验；恢复训练须使用 checkpoint 对应的原配置。
 
 当前正式配置为 `batch_size=64`、`num_workers=4`、`persistent_workers=true`，验证读取参数自动同步；短训练保持2／0／false。历史原图GPU测试采用每批32个样本，峰值分配显存约26.6GiB，详情见[测试结果](../../wys/2026-10-04-rail-native-resolution-test/test-summary.json)。
 
-当前 `n_obs_steps=2`、`horizon=16`、`n_action_steps=8`：两步观测相隔0.1秒，16步完整标签首尾跨度1.5秒，8步执行段计划时刻为 `t0+[0,0.1,…,0.7]` 秒，最后一步覆盖至 `t0+0.8` 秒。批大小、学习率和总目标600轮保持原设置；验证损失每5轮一次，离线动作评估每50轮一次。
+当前Transformer默认 `n_obs_steps=1`，UNet默认 `n_obs_steps=2`；两种网络均为 `horizon=16`、`n_action_steps=8`。30 Hz下两帧观测相隔约33 ms，16步完整标签首尾跨度0.5秒，8步执行段最后目标在最新观测后约233 ms，覆盖至约267 ms。验证损失每5轮一次，离线动作评估每50轮一次。
 
 **输出目录默认按启动日期、时间和动作空间自动创建**，格式为 `data/outputs/年.月.日/时.分.秒_tianji_rail_<动作空间>/`，例如末端版 `data/outputs/2026.10.19/18.30.00_tianji_rail_eef/`、关节版 `data/outputs/2026.10.19/18.30.00_tianji_rail_joint/`。此前的目录名为 `_tianji_rail`，均为末端版。新训练命令不需要传 `hydra.run.dir`；需要自定义目录时再用该参数覆盖。目录保存 `checkpoints/latest.ckpt`（模型及训练状态）、`logs.json.txt`（日志）和 `.hydra/`（配置记录），路径均相对于项目目录。恢复训练必须显式指定原输出目录。
 
@@ -85,16 +86,16 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 
 启动前核对以下参数；当前值适用时无需重复写到命令行：
 
-| 配置参数                                         | 当前值               | 何时修改                                                                                |
-| ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
-| `task.action_space`                            | `eef`              | 关节版数据设为`joint`，须与Zarr的`action_space` 一致                                |
-| `task.sample_hz`                               | `30`               | 数据采样频率改变时同步修改，须与Zarr的`target_fps` 一致                               |
-| `task.dataset.val_ratio`                       | `0.05`             | 调整按独立演示来源留出的验证比例；单条演示设为`0`                                     |
-| `dataloader.batch_size`                        | `64`               | 按显存容量调整每批样本数，显存不足时减小                                                |
-| `dataloader.num_workers`                       | `4`                | 按数据读取速度调整；设为`0` 时同时将 `dataloader.persistent_workers` 设为 `false` |
-| `training.num_epochs`                          | `600`              | 调整训练的总目标轮数                                                                    |
-| `optimizer.learning_rate`                      | `0.0001`           | 需要调整优化参数时修改；改变批大小不会自动缩放学习率                                    |
-| `n_obs_steps`／`horizon`／`n_action_steps` | `2`／`16`／`8` | 需要改变观测或预测的时间范围时修改，须满足`n_obs_steps-1+n_action_steps <= horizon`   |
+| 配置参数                                                             | 当前值               | 何时修改                                                                                |
+| -------------------------------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------- |
+| `task.action_space`                                                | `eef`              | 关节版数据设为`joint`，须与Zarr的`action_space` 一致                                |
+| `task.sample_hz`                                                   | `30`               | 数据采样频率改变时同步修改，须与Zarr的`target_fps` 一致                               |
+| `task.dataset.val_ratio`                                           | `0.05`             | 调整按独立演示来源留出的验证比例；单条演示设为`0`                                     |
+| `dataloader.batch_size`                                            | `64`               | 按显存容量调整每批样本数，显存不足时减小                                                |
+| `dataloader.num_workers`                                           | `4`                | 按数据读取速度调整；设为`0` 时同时将 `dataloader.persistent_workers` 设为 `false` |
+| `training.num_epochs`                                              | `600`              | 调整训练的总目标轮数                                                                    |
+| `optimizer.learning_rate`（Transformer）／`optimizer.lr`（UNet） | `0.0001`           | 需要调整优化参数时修改；改变批大小不会自动缩放学习率                                    |
+| `n_obs_steps`／`horizon`／`n_action_steps`                     | Transformer：`1`／`16`／`8`；UNet：`2`／`16`／`8` | 需要改变观测或预测的时间范围时修改，须满足`n_obs_steps-1+n_action_steps <= horizon`   |
 
 上述参数也可作为 `参数名=值` 追加到同一条命令，例如 `training.num_epochs=100`，只覆盖本次运行。输入图像设置见本节前面的说明。
 
@@ -115,6 +116,32 @@ python train.py --config-name=train_diffusion_transformer_tianji_rail_workspace 
 短训练检查把配置名换成 `train_diffusion_transformer_tianji_rail_smoke_workspace`，其余参数不变。末端版数据省略 `task.action_space`，使用默认值 `eef`。参数与数据不一致时启动即报错，例如关节版数据未加 `task.action_space=joint` 时，提示 `Dataset action_space=joint does not match configured action_space=eef`。
 
 `task.action_space` 和解析后的观测与动作契约写入 checkpoint，离线评估和真机部署据此自动选择对应流程，不需要再次指定。
+
+### 使用UNet policy
+
+默认训练入口使用Transformer；选择UNet时改用下面的配置名。UNet沿动作时间轴去噪，图像编码器仍为ResNet18；两种动作空间共用原有数据、预处理、EMA验证和评估入口。
+
+```bash
+# 关节版短训练：先检查数据、训练和checkpoint保存流程。
+python train.py --config-name=train_diffusion_unet_tianji_rail_smoke_workspace \
+  task.action_space=joint \
+  "task.dataset.dataset_path=/path/to/rail_joint_30hz.zarr"
+
+# 关节版正式训练：600轮；末端版改为 task.action_space=eef 并使用对应数据。
+python train.py --config-name=train_diffusion_unet_tianji_rail_workspace \
+  task.action_space=joint \
+  "task.dataset.dataset_path=/path/to/rail_joint_30hz.zarr"
+
+# 2026/10/20 15：21  使用UNet policy；2次观测；关节版数据集
+python train.py --config-name=train_diffusion_unet_tianji_rail_workspace \
+  task.action_space=joint \
+  n_obs_steps=2 \
+  "task.dataset.dataset_path=/home/jiyuchen/project/WYS/bimanual-teleop/datasets/rail_place3_joint_30hz.zarr"
+```
+
+默认30 Hz、2帧观测、预测16步、执行8步，DDIM推理8次；10 Hz数据加 `task.sample_hz=10`。UNet学习率参数为 `optimizer.lr`，网络宽度为 `policy.down_dims=[256,512,1024]`；这组三层结构要求 `horizon` 为4的倍数。显存不足时减小 `dataloader.batch_size`。
+
+输出目录为 `data/outputs/年.月.日/时.分.秒_tianji_rail_unet_<动作空间>/`。恢复训练使用相同UNet配置名，加原数据路径、`hydra.run.dir` 和 `training.resume=true`；Transformer和UNet使用各自的checkpoint。离线评估和真机评估仍按第4、5节运行，入口从checkpoint自动加载网络类型。
 
 ### 恢复训练
 
@@ -169,7 +196,7 @@ python eval.py \
 
 **末端版和关节版使用同一个入口和同一个[部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)**。入口从 checkpoint 读取动作空间（`task.action_space`，旧 checkpoint 没有该字段时按末端版处理），自动选择对应的观测、动作校验和机械臂执行器，命令中不需要指定。需要改动的部署参数用 `--set` 在命令行覆盖，见下方“部署参数”。
 
-将 `run_dir` 换成实际训练输出目录。首先检查模型重载及 batch=1 推理，不连接任何设备。当前训练配置为30 Hz，部署配置默认10 Hz，因此30 Hz模型的每条部署命令都要加 `--set policy_hz=30`；频率不一致时入口直接报错：
+将 `run_dir` 换成实际训练输出目录。首先检查模型重载及 batch=1 推理，不连接任何设备。训练和部署当前均默认30 Hz，下例显式写出频率；10 Hz模型改为 `--set policy_hz=10`。频率不一致时入口直接报错：
 
 ```bash
 run_dir=data/outputs/2026.10.19/18.30.00_tianji_rail_joint
@@ -195,7 +222,7 @@ python eval_tianji_rail.py \
 推理模式由部署配置 `inference_mode` 决定，入口 `--inference-mode async|sync` 可覆盖，实际值记入 `session.json` 的 `deployment.inference_mode`：
 
 - `async`（默认）：推理与执行并行，新锚点至少前进 `replanning_steps/policy_hz` 秒才发起下一轮推理，新预测替换未来队列。
-- `sync`：每轮先等上一执行段执行完，再取锚点晚于完成时刻的新观测推理；推理期间机器人保持上一目标。返回的全部执行段（当前 `n_action_steps=8`、10 Hz，800 ms）从提交时刻加 `submit_margin_s` 重新计时，全部执行，不丢弃步骤；`replanning_steps` 不生效。
+- `sync`：每轮先等上一执行段执行完，再取锚点晚于完成时刻的新观测推理；推理期间机器人保持上一目标。返回的全部执行段（当前 `n_action_steps=8`，30 Hz约267 ms；10 Hz为800 ms）从提交时刻加 `submit_margin_s` 重新计时，全部执行，不丢弃步骤；`replanning_steps` 不生效。
 
 同步模式每轮都会停顿约"等待新帧＋推理耗时"，`timing.json` 的 `sync_hold_ms` 统计从执行段完成到预测返回的时间。试验总时长相应变长，必要时调大 `trial_timeout_s`。保持期间仍做设备和数据流健康检查，异常时中止。影子模式下检查同步调度：
 
@@ -206,7 +233,7 @@ python eval_tianji_rail.py \
   --inference-mode sync --output data/real_eval/shadow-sync-001
 ```
 
-[部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)引用项目内机械臂、手和相机配置（[设备约定](device-runtime.md)），并为时间阈值、速度、试验超时等参数提供注释。模型形状、动作空间、RGB 预处理、EMA 和归一化器以 checkpoint 为准；部署配置默认10 Hz、`n_latency_steps=0`。三路RGB相机仍采30 Hz，状态历史100 Hz，双臂控制200 Hz，双手控制各120 Hz。缺少频率字段的旧导轨checkpoint按30 Hz处理，同样加 `--set policy_hz=30`。
+[部署配置](../../diffusion_policy/config/tianji_rail_real_eval.yaml)引用项目内机械臂、手和相机配置（[设备约定](device-runtime.md)），并为时间阈值、速度、试验超时等参数提供注释。模型形状、动作空间、RGB 预处理、EMA 和归一化器以 checkpoint 为准；部署配置默认30 Hz、`n_latency_steps=0`。三路RGB相机仍采30 Hz，状态历史100 Hz，双臂控制200 Hz，双手控制各120 Hz。缺少频率字段的旧导轨checkpoint按30 Hz处理。
 
 ### 部署参数
 

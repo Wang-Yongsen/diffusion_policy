@@ -53,11 +53,14 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
             self.ema_model = copy.deepcopy(self.model)
 
         # configure training state
-        self.optimizer = self.model.get_optimizer(**cfg.optimizer)
+        self.optimizer = self._create_optimizer(cfg)
 
         # configure training state
         self.global_step = 0
         self.epoch = 0
+
+    def _create_optimizer(self, cfg):
+        return self.model.get_optimizer(**cfg.optimizer)
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)

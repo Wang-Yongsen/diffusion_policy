@@ -89,7 +89,9 @@ class FakeHand:
 
 class RealEvaluationTests(unittest.TestCase):
     def test_10hz_observation_alignment_action_timing_and_expiry(self):
-        cfg = load_deployment_config(PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml")
+        # Keep exercising 10 Hz compatibility independently of the 30 Hz default.
+        cfg = load_deployment_config(PROJECT_ROOT / "diffusion_policy/config/tianji_rail_real_eval.yaml",
+                                     ["policy_hz=10"])
         self.assertEqual((cfg["policy_hz"], cfg["replanning_steps"]), (10, 1))
         history = histories()
         for key in ("camera_0", "camera_1", "camera_2"):
@@ -135,7 +137,8 @@ class RealEvaluationTests(unittest.TestCase):
              patch.object(entry, "load_policy", return_value=(None, legacy, "ema_model")), \
              patch.object(entry, "check_inference") as infer, patch.object(entry, "TianjiRailEnv") as env:
             with self.assertRaisesRegex(ValueError, "Checkpoint sample_hz=30"):
-                entry.main(["--checkpoint", "unused.ckpt", "--output", str(Path(root) / "session")])
+                entry.main(["--checkpoint", "unused.ckpt", "--set", "policy_hz=10",
+                            "--output", str(Path(root) / "session")])
             infer.assert_not_called()
             env.assert_not_called()
 
