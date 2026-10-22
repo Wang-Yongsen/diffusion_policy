@@ -1,18 +1,17 @@
 """回位目标：机械臂沿用 ready_pose，灵巧手使用示范起点。"""
 
 import math
-from pathlib import Path
-import sys
 import unittest
 from unittest.mock import Mock
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from diffusion_policy.third_party.bimanual_teleop.devices.tianji.config import load_config
-from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import JOINT_LIMITS_RAD, JOINT_NAMES
-import home_tianji_rail as home
-
+from diffusion_policy.real_world.tianji import home
+from diffusion_policy.third_party.bimanual_teleop.devices.tianji.config import (
+    load_config,
+)
+from diffusion_policy.third_party.bimanual_teleop.devices.wuji.adapter import (
+    JOINT_LIMITS_RAD,
+    JOINT_NAMES,
+)
 
 READY_DEG = {
     "left": [30, -60, -34, -52, 30, 12, 4],
@@ -64,7 +63,9 @@ class HomeTargetTests(unittest.TestCase):
         driver.close.assert_not_called()
         driver.clear_errors.assert_called_once()
         driver.configure.assert_called_once()
-        self.assertEqual([call.args[0] for call in driver.move_joints.call_args_list], ["left", "right"])
+        self.assertEqual(
+            [call.args[0] for call in driver.move_joints.call_args_list], ["left", "right"]
+        )
         profile = driver.configure.call_args.args[0]
         self.assertEqual(profile.profile_id, settings["profile"]["profile_id"] + "-ready")
         self.assertEqual(profile.parameters["arms"]["left"]["velocity_ratio"], 25)

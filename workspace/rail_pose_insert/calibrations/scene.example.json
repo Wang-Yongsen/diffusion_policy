@@ -1,0 +1,13 @@
+{
+  "parent_frame": "tianji_left_base",
+  "unit": "m",
+  "obstacles": [
+    {
+      "name": "table",
+      "type": "box",
+      "size_m": null,
+      "T_B_obstacle": null
+    }
+  ],
+  "note": "填写台面、料箱等固定障碍的实测尺寸及基座系位姿；导轨台模型由已示教目标自动定位。需要保留台面、料箱和其他可能进入路径的障碍。"
+}

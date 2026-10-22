@@ -1,0 +1,33 @@
+# 导轨 UNet；数据路径和动作空间在命令行指定。
+# 增强仅在训练启用；同一路相机的历史帧共享随机参数。
+defaults:
+- train_diffusion_unet_tianji_rail_320_crop_workspace
+- _self_
+name: train_diffusion_unet_tianji_rail_320_crop_aug
+task:
+  dataset:
+    image_augmentation:
+      _target_: torchvision.transforms.Compose
+      _convert_: all
+      transforms:
+      - _target_: torchvision.transforms.RandomApply
+        p: 0.8
+        transforms:
+        - _target_: torchvision.transforms.ColorJitter
+          brightness: 0.2
+          contrast: 0.2
+          saturation: 0.1
+          hue: 0.02
+      - _target_: torchvision.transforms.RandomApply
+        p: 0.1
+        transforms:
+        - _target_: torchvision.transforms.GaussianBlur
+          kernel_size: 3
+          sigma:
+          - 0.1
+          - 0.8
+      - _target_: torchvision.transforms.RandomGrayscale
+        p: 0.05
+hydra:
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_tianji_rail_unet_320_crop_aug_${task.action_space}

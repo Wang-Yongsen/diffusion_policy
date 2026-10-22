@@ -1,15 +1,10 @@
-"""UNet rail training with the shared EMA validation and resume loop."""
+"""Rail UNet optimizer specialization; keep this class path for checkpoints."""
 
 import hydra
 
-from diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace import (
-    TrainDiffusionTransformerHybridWorkspace,
-)
+from diffusion_policy.workspace.train_image_workspace import TrainImageWorkspace
 
 
-class TrainDiffusionUnetTianjiRailWorkspace(TrainDiffusionTransformerHybridWorkspace):
-    # The training loop uses the common image-policy interface. Only optimizer
-    # construction differs: UNet uses AdamW over the whole policy, whereas the
-    # Transformer groups its encoder and denoiser parameters separately.
+class TrainDiffusionUnetTianjiRailWorkspace(TrainImageWorkspace):
     def _create_optimizer(self, cfg):
         return hydra.utils.instantiate(cfg.optimizer, params=self.model.parameters())

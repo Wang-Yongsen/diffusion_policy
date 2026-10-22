@@ -1,177 +1,99 @@
-# 先运行短训练验证接口，再用多条独立真实演示正式训练。
+# 导轨 Transformer；数据路径和动作空间在命令行指定。
 defaults:
-  - _self_
-  - task: tianji_rail_image
-# 工作区与模型名；输出目录用 hydra.run.dir 指定，每个新实验使用新目录。
+- _self_
+- task: tianji_rail_image
 name: train_diffusion_transformer_tianji_rail
 _target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
-# 与任务共用形状，图像尺寸只修改 task.image_shape。
 shape_meta: ${task.shape_meta}
-# 完整预测16步、观测2步、执行8步；执行标签为 [n_obs_steps-1:n_obs_steps-1+n_action_steps]。
-# 修改时应满足 n_obs_steps-1+n_action_steps <= horizon。
-# 当前10 Hz：两步观测相隔100 ms，16步标签首尾跨度1.5秒；8步执行段覆盖0.8秒。
 horizon: 16
 n_obs_steps: 1
 n_action_steps: 8
 policy:
-  # 用户指定的 Transformer Hybrid Image Policy。
   _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_policy.DiffusionTransformerHybridImagePolicy
-  # 观测、动作及时间窗口共用配置，不单独更改以免标签错位。
   shape_meta: ${shape_meta}
   horizon: ${horizon}
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   noise_scheduler:
-    # 使用 DDIM；训练时间步和推理迭代次数是不同参数。
     _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
-    # 噪声训练步数；基线100，更改后需新训练。
     num_train_timesteps: 100
-    # 噪声强度端点；优先保持参考值，不与推理步数一起随意调整。
     beta_start: 0.0001
     beta_end: 0.02
-    # 余弦噪声日程；修改日程需要重新训练。
     beta_schedule: squaredcos_cap_v2
-    # true将采样得到的归一化动作截断到[-1,1]；归一化变换本身不截断。
-    # 范围外目标可能无法表达；离线评估用--clip-sample/--no-clip-sample对比。
     clip_sample: true
-    # DDIM 末步使用 alpha=1；参考配置建议保持。
     set_alpha_to_one: true
-    # 时间步偏移；参考值0，一般无需修改。
     steps_offset: 0
-    # 学习预测噪声；改为 sample 会改变训练目标，需新实验。
     prediction_type: epsilon
-  # DDIM 推理迭代次数；更多通常更慢，先以8步比较效果。
   num_inference_steps: 8
-  # 当前 null 保留整幅原图；[高,宽]启用训练随机裁剪，如原图480×640时用[432,576]。
-  # 高宽须分别小于输入；先检查裁剪后是否仍覆盖导轨和手。
   crop_shape: null
-  # 开启裁剪后验证/评估固定中心裁剪；建议 true，避免随机评估。
   eval_fixed_crop: true
-  # 小batch和EMA训练建议用GroupNorm，避免BatchNorm统计不稳定。
   obs_encoder_group_norm: true
-  # Transformer层数；增加会提高显存及计算量，先保持8。
   n_layer: 8
-  # 条件编码层数；0使用MLP，正整数使用条件Transformer编码器。
   n_cond_layers: 0
-  # 注意力头数；必须整除 n_emb。
   n_head: 4
-  # 隐藏维度；需被 n_head 整除，减小可降低计算量。
   n_emb: 256
-  # 输入嵌入dropout概率，范围[0,1)，基线0。
   p_drop_emb: 0.0
-  # 注意力dropout概率，范围[0,1)，基线0.3，过拟合后再比较调整。
   p_drop_attn: 0.3
-  # 因果注意力；参考接口建议保持 true。
   causal_attn: true
-  # 时间步作为条件；参考接口建议保持 true。
   time_as_cond: true
-  # 观测作为条件；false改变建模方式，需新实验。
   obs_as_cond: true
-  # false预测完整horizon再截执行段；当前Workspace采样检查要求 false。
   pred_action_steps_only: false
 ema:
-  # 指数滑动平均模型，用于评估及checkpoint重载。
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
-  # EMA开始更新前的训练步数；0从开始即更新。
   update_after_step: 0
-  # EMA衰减日程缩放；沿用参考值，通常无需改动。
   inv_gamma: 1.0
-  # EMA衰减日程幂次；沿用参考值。
   power: 0.75
-  # EMA衰减上下界；基线[0,0.9999]。
   min_value: 0.0
   max_value: 0.9999
 dataloader:
-  # 每批64个时间窗口样本；短训配置覆盖为2。
-  # 历史batch=32原图测试的峰值分配显存约26.6GiB，不代表batch=64占用。
   batch_size: 64
-  # 4个读取子进程；原图batch=32实测约57样本/秒，与8个进程几乎相同。
-  # 短训覆盖为0，由主进程读取；设0时必须同时关闭 persistent_workers。
   num_workers: 4
-  # 训练打乱样本，建议 true。
   shuffle: true
-  # CUDA传输使用锁页内存；GPU训练建议 true。
   pin_memory: true
-  # 跨轮保留读取进程，避免每轮重新创建；num_workers=0时必须为 false。
   persistent_workers: true
 val_dataloader:
-  # 验证batch，可按显存调整；不影响来源划分。
   batch_size: ${dataloader.batch_size}
-  # 与训练读取设置共用，避免两处调整。
   num_workers: ${dataloader.num_workers}
-  # 验证固定顺序便于复现。
   shuffle: false
-  # GPU传输设置与训练一致。
   pin_memory: ${dataloader.pin_memory}
-  # 与训练共用；短训使用0个worker时自动关闭。
   persistent_workers: ${dataloader.persistent_workers}
 optimizer:
-  # Transformer参数权重衰减；专用get_optimizer接口，不传通用AdamW的weight_decay。
   transformer_weight_decay: 0.001
-  # 视觉编码器权重衰减；参考值1e-6，先保持。
-  obs_encoder_weight_decay: 0.000001
-  # 学习率；不稳定可降低，正式训练需与warmup一起考虑。
+  obs_encoder_weight_decay: 1.0e-06
   learning_rate: 0.0001
-  # Adam动量系数；Transformer参考值[0.9,0.95]。
-  betas: [0.9, 0.95]
+  betas:
+  - 0.9
+  - 0.95
 training:
-  # RTX PRO 6000，cuda:0；CPU只用于小规模接口验证。
   device: cuda:0
-  # 随机种子；比较配置时保持相同。
   seed: 42
-  # debug会覆盖epoch/步数等设置；推荐显式设冒烟参数，保持 false。
   debug: false
-  # 新实验 false；同目录、同数据和同配置恢复时设 true。
   resume: false
-  # 余弦学习率日程；沿用参考设置。
   lr_scheduler: cosine
-  # 学习率预热步数；正式500，短冒烟设0。
   lr_warmup_steps: 500
-  # 正式训练epoch数；短冒烟设2，不代表模型收敛。
   num_epochs: 600
-  # 累积梯度batch数；基线1，增加可减少单batch显存需求。
   gradient_accumulate_every: 1
-  # 是否维护EMA；建议 true，与GroupNorm配合。
   use_ema: true
-  # 离线Runner调用间隔，epoch；小值会增加评估耗时。
   rollout_every: 50
-  # checkpoint保存间隔，epoch；冒烟设1。
   checkpoint_every: 10
-  # 验证损失间隔，epoch；使用EMA模型的评估模式和固定seed，按样本数加权。
-  # 关闭EMA时使用普通模型的评估模式；空验证集自动跳过。
   val_every: 5
-  # 训练batch动作采样检查间隔，epoch；冒烟设1。
   sample_every: 5
-  # 每epoch最多训练batch；null完整训练，冒烟设2。
   max_train_steps: null
-  # 每次验证最多batch；null完整验证，冒烟可设2。
   max_val_steps: null
-  # 进度条刷新间隔，秒；增大减少终端输出。
   tqdm_interval_sec: 1.0
 logging:
-  # 关闭外部日志，训练记录仍写入输出目录。
   mode: disabled
-  # 本地实验标识；若以后开启wandb则用于项目名。
   project: tianji_rail
-  # 新实验日志不复用run。
   resume: false
-  # 日志run名，与模型配置名称一致。
   name: ${name}
 checkpoint:
   topk:
-    # 有来源留出验证时自动监控val_loss，单演示监控train_loss。
-    monitor_key: '${eval:"\"val_loss\" if ${task.dataset.val_ratio} > 0 else \"train_loss\""}'
-    # 损失越低越好。
+    monitor_key: ${eval:"\"val_loss\" if ${task.dataset.val_ratio} > 0 else \"train_loss\""}
     mode: min
-    # 最多保留3个最佳checkpoint；增大占用更多磁盘。
     k: 3
-    # 只使用epoch命名，切换监控项无需手动修改格式。
-    format_str: 'epoch={epoch:04d}.ckpt'
-  # 保存latest，便于恢复训练。
+    format_str: epoch={epoch:04d}.ckpt
   save_last_ckpt: true
-  # 关闭完整对象快照，使用更稳定的checkpoint格式。
   save_last_snapshot: false
 hydra:
   run:
-    # 新实验使用独立目录；恢复时明确指定原目录。
     dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_tianji_rail_${task.action_space}

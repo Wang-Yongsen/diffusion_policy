@@ -1,78 +1,80 @@
-# 固定目标区域的双臂双手导轨任务，用于训练和离线评估；末端版与关节版共用本配置。
+# 导轨观测与动作契约。
 name: tianji_rail_image
-# 动作空间：eef 为末端版，joint 为关节版；须与Zarr的action_space属性一致。
-# 关节版在命令行加 task.action_space=joint，观测和动作契约随之切换为下方 joint 一组。
+# 模型动作：eef 58维（臂9+9、手20+20）；joint 54维（臂7+7、手20+20）。
 action_space: eef
-# 训练观测和动作的采样频率，Hz；写入checkpoint，部署policy_hz必须与此一致。
+# Hz；须匹配 Zarr target_fps 和部署 policy_hz。
 sample_hz: 30
-# Dataset 输出尺寸，顺序为 [通道,高,宽]；当前三路原图均为宽640、高480。
-# 当前关闭缩放，必须填写原图尺寸 [3,480,640]；此参数本身不会执行缩放。
-# 后续若需缩小，须同时将 dataset.resize_enabled 改为 true，并设置目标尺寸，如 [3,240,320]。
-image_shape: [3, 480, 640]
-# 实际使用的观测字段和尺寸契约，按 action_space 从 shape_meta_options 选取，勿直接修改。
+# [通道,高,宽]；关闭缩放时须匹配原图。
+image_shape:
+- 3
+- 480
+- 640
 shape_meta: ${task.shape_meta_options.${task.action_space}}
-# 两种动作空间各自的契约；新增模态需相应编码器，不能只加字段名。
+# 位置 m、关节角 rad；eef 观测旋转为 xyzw 四元数，动作旋转为6D，均不缩放。
+# 动作是绝对目标。Zarr仍保存 xyz+rotvec，由Dataset转换为模型表示。
 shape_meta_options:
   eef:
     obs:
-      # 三路 RGB 共用 image_shape；当前按原图尺寸读取，三路原图尺寸须一致。
-      camera_0: {shape: '${task.image_shape}', type: rgb}
-      camera_1: {shape: '${task.image_shape}', type: rgb}
-      camera_2: {shape: '${task.image_shape}', type: rgb}
-      # 左右末端各 xyz 米 + rotvec 弧度，共 12 维。
-      robot_eef_pose: {shape: [12], type: low_dim}
-      # 左右手各 20 个绝对关节角，弧度。
-      hand_joint: {shape: [40], type: low_dim}
-    # 左臂6、右臂6、左手20、右手20；绝对目标，不偏移标签。
-    action: {shape: [52]}
+      camera_0:
+        shape: ${task.image_shape}
+        type: rgb
+      camera_1:
+        shape: ${task.image_shape}
+        type: rgb
+      camera_2:
+        shape: ${task.image_shape}
+        type: rgb
+      robot_eef_pose:
+        shape:
+        - 14
+        type: low_dim
+      hand_joint:
+        shape:
+        - 40
+        type: low_dim
+    action:
+      shape:
+      - 58
   joint:
     obs:
-      camera_0: {shape: '${task.image_shape}', type: rgb}
-      camera_1: {shape: '${task.image_shape}', type: rgb}
-      camera_2: {shape: '${task.image_shape}', type: rgb}
-      # 左右臂各 7 个实测关节角，共 14 维，弧度。
-      robot_joint: {shape: [14], type: low_dim}
-      # 左右手各 20 个绝对关节角，弧度。
-      hand_joint: {shape: [40], type: low_dim}
-    # 左臂7、右臂7、左手20、右手20；绝对关节目标，弧度，不偏移标签。
-    action: {shape: [54]}
+      camera_0:
+        shape: ${task.image_shape}
+        type: rgb
+      camera_1:
+        shape: ${task.image_shape}
+        type: rgb
+      camera_2:
+        shape: ${task.image_shape}
+        type: rgb
+      robot_joint:
+        shape:
+        - 14
+        type: low_dim
+      hand_joint:
+        shape:
+        - 40
+        type: low_dim
+    action:
+      shape:
+      - 54
 dataset:
-  # 按需读取 RGB，按原始示范划分、连续片段内采样。
   _target_: diffusion_policy.dataset.tianji_rail_image_dataset.TianjiRailImageDataset
-  # 校验Zarr的action_space属性及动作维度。
   action_space: ${task.action_space}
-  # 数据路径；正式训练固定数据版本，恢复训练不更换。
   dataset_path: ../bimanual-teleop/datasets/rail_place_10hz.zarr
-  # 校验zarr的target_fps及每个连续片段的时间间隔，拒绝误用30 Hz数据。
   sample_hz: ${task.sample_hz}
-  # 尺寸契约与输出尺寸共用任务配置，勿独立改为不同值。
   shape_meta: ${task.shape_meta}
   image_shape: ${task.image_shape}
-  # 当前按用户要求不缩放：false 保留原图，仅转换通道顺序和像素数值格式。
-  # 关闭时 task.image_shape 须匹配每路原图尺寸，否则启动校验报错；显存开销高于缩小图像。
-  # 后续设 true 才会在读取样本时缩放到 task.image_shape，不修改 zarr 中保存的原图。
   resize_enabled: false
-  # 仅 resize_enabled=true 时生效，当前关闭缩放所以不执行插值。
-  # area 适合缩小；bilinear 可用于放大；nearest 通常不适合 RGB。
   resize_interpolation: area
-  # 完整动作窗口长度；不足长度不产样本，不补齐，不跨剩余缺口。
   horizon: ${horizon}
-  # 只读取前几个观测帧；需不超过 horizon，与 Policy 保持一致。
   n_obs_steps: ${n_obs_steps}
-  # 来源划分随机种子；正式比较实验保持不变。
   seed: ${training.seed}
-  # 按独立示范来源留出5%；单演示须显式改为0。
+  # 按原始示范来源划分；窗口不跨连续片段边界。
   val_ratio: 0.05
 env_runner:
-  # 离线动作指标：末端版为位置/旋转误差，关节版为关节平均绝对误差；不估计实机放置成功率，无验证窗口则明确跳过。
   _target_: diffusion_policy.env_runner.tianji_rail_offline_runner.TianjiRailOfflineRunner
-  # 重用同一数据、划分和确定性图像预处理；不重拟合 Policy 的归一化参数。
   dataset: ${task.dataset}
-  # 执行段从 n_obs_steps-1 开始，长度应能放入完整动作窗口。
   n_action_steps: ${n_action_steps}
-  # 离线预测 batch；显存不足时减小。
   batch_size: 8
-  # 每个连续片段内评估窗口起点间隔；1 检查所有窗口，8 更快且仍可能部分重叠。
   window_stride: 8
-  # null 评估全部所选窗口；冒烟可设较小正整数，报告会反映实际窗口数。
   max_windows: null

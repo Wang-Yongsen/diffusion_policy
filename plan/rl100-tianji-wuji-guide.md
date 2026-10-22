@@ -51,7 +51,7 @@
 
 沿用已验证的 checkpoint、预处理、归一化器和执行模式，完成 20–30 次真实观测闭环试验，记录成功率、失败阶段、完成时间和接管次数。示教观测回放只能验证该输入下的预测及执行，不能替代真实相机闭环。
 
-项目已有[观测差异排查计划](/home/yuchen/project/diffusion_policy/docs/tianji-rail-next-actions-after-results-20261017.md)。先完成其中输入、请求目标、命令 FK、控制器反馈与实测反馈的对应检查，再判断剩余问题是否适合用 RL 改进。观测错位、错误坐标或下发接口问题应先修复。
+项目已有[观测差异实验摘要](/home/yuchen/project/diffusion_policy/docs/tianji-rail/results.md)。先完成其中输入、请求目标、命令 FK、控制器反馈与实测反馈的对应检查，再判断剩余问题是否适合用 RL 改进。观测错位、错误坐标或下发接口问题应先修复。
 
 带噪声采集前还需收紧一个具体配置：当前[真机配置](/home/yuchen/project/diffusion_policy/diffusion_policy/config/tianji_rail_real_eval.yaml)将双臂 workspace 设为每轴 ±1000 米，近似不限制位置。将其换成任务实测范围，再确定探索边界。52 个动作维度的物理量不同，不直接把官方归一化噪声上限照搬到手和双臂。
 
@@ -177,6 +177,6 @@ PPO 比率来自同一去噪转移在新旧策略下的概率之比。离线优�
 
 - [RL-100 v4 正文与附录](https://arxiv.org/pdf/2510.14830v4)，重点为 Algorithm 1、Methods、Table S2、Table S3。
 - [官方实现](https://github.com/Lei-Kun/RL-100)、[安装要求](https://github.com/Lei-Kun/RL-100/blob/main/INSTALL.md)、[数据准备格式](https://github.com/Lei-Kun/RL-100/blob/main/tools/teleop_off2off_data/DATA_PREPARE.md)。
-- [本地模型使用说明](/home/yuchen/project/diffusion_policy/docs/tianji-rail/README.md)、[本地数据采集格式](/home/yuchen/project/bimanual-teleop/docs/recording_reference.md)、[当前观测差异排查计划](/home/yuchen/project/diffusion_policy/docs/tianji-rail-next-actions-after-results-20261017.md)。
+- [本地模型使用说明](/home/yuchen/project/diffusion_policy/docs/tianji-rail/README.md)、[本地数据采集格式](/home/yuchen/project/bimanual-teleop/docs/recording_reference.md)、[观测差异实验摘要](/home/yuchen/project/diffusion_policy/docs/tianji-rail/results.md)。
 
 本指南中的本地接口判断来自代码和配置；约 50 条示范按用户提供的数量规划，尚未逐条审阅原始录制。代码中示例数据路径不应视为已在本机验证可用的实际数据位置。

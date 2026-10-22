@@ -1,0 +1,20 @@
+# 导轨 UNet；数据路径和动作空间在命令行指定。
+# 输入宽320×高240，裁剪宽288×高216；验证与部署固定中心裁剪。
+defaults:
+- train_diffusion_unet_tianji_rail_workspace
+- _self_
+name: train_diffusion_unet_tianji_rail_320_crop
+task:
+  image_shape:
+  - 3
+  - 240
+  - 320
+  dataset:
+    resize_enabled: true
+policy:
+  crop_shape:
+  - 216
+  - 288
+hydra:
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_tianji_rail_unet_320_crop_${task.action_space}

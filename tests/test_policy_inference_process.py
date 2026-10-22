@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-import diffusion_policy.real_world.policy_inference_process as module
+import diffusion_policy.real_world.tianji.inference as module
 
 
 def echo_worker(connection, checkpoint, device, capture_rng=False):
@@ -30,9 +30,18 @@ def echo_worker(connection, checkpoint, device, capture_rng=False):
                 return
             count += 1
             now = time.monotonic_ns()
-            connection.send({"ok": True, "actions": np.full((1, 8, 52), count, np.float32),
-                             "timing": {"received_ns": now, "preprocessed_ns": now,
-                                        "inputs_ready_ns": now, "returned_ns": now}})
+            connection.send(
+                {
+                    "ok": True,
+                    "actions": np.full((1, 8, 52), count, np.float32),
+                    "timing": {
+                        "received_ns": now,
+                        "preprocessed_ns": now,
+                        "inputs_ready_ns": now,
+                        "returned_ns": now,
+                    },
+                }
+            )
     finally:
         connection.close()
 
@@ -40,7 +49,7 @@ def echo_worker(connection, checkpoint, device, capture_rng=False):
 class PolicyInferenceProcessTests(unittest.TestCase):
     def client(self):
         with patch.object(module, "_inference_worker", echo_worker):
-            client = module.PolicyInferenceProcess("unused.ckpt", "cpu", startup_timeout_s=15.)
+            client = module.PolicyInferenceProcess("unused.ckpt", "cpu", startup_timeout_s=15.0)
         self.addCleanup(client.close)
         return client
 
@@ -51,7 +60,9 @@ class PolicyInferenceProcessTests(unittest.TestCase):
         self.assertEqual(client.predict_observation(obs)["action"][0, 0, 0].item(), 2)
         client.reset()
         self.assertEqual(client.predict_observation(obs)["action"][0, 0, 0].item(), 1)
-        self.assertLessEqual(client.last_timing["request_started_ns"], client.last_timing["response_received_ns"])
+        self.assertLessEqual(
+            client.last_timing["request_started_ns"], client.last_timing["response_received_ns"]
+        )
         client.close()
         self.assertFalse(client._process.is_alive())
 
@@ -63,18 +74,20 @@ class PolicyInferenceProcessTests(unittest.TestCase):
     def test_close_interrupts_an_inflight_prediction_and_stops_worker(self):
         client = self.client()
         failures = []
+
         def predict():
             try:
                 client.predict_observation({"block": True})
             except RuntimeError as error:
                 failures.append(str(error))
+
         thread = threading.Thread(target=predict)
         thread.start()
         deadline = time.monotonic() + 2
         while not client._lock.locked() and time.monotonic() < deadline:
-            time.sleep(.001)
+            time.sleep(0.001)
         client.close()
-        thread.join(timeout=2.)
+        thread.join(timeout=2.0)
         self.assertFalse(thread.is_alive())
         self.assertFalse(client._process.is_alive())
         self.assertTrue(failures)

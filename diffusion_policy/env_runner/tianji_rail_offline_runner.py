@@ -8,12 +8,18 @@ from scipy.spatial.transform import Rotation
 from torch.utils.data import DataLoader, Subset
 
 from diffusion_policy.dataset.tianji_rail_image_dataset import ACTION_DIMS
+from diffusion_policy.common.tianji_rail_pose import RAW_ACTION_DIMS, eef_action_to_rotvec
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 
 
 def action_errors(prediction, target, action_space="eef"):
-    """One error per prediction step, using SO(3) distance for EEF rotations."""
-    dim = ACTION_DIMS[action_space]
+    """SO(3) errors for policy 58-D EEF actions or recorded/controller 52-D actions."""
+    if action_space == "eef":
+        if prediction.shape[-1] == ACTION_DIMS["eef"]:
+            prediction = eef_action_to_rotvec(prediction)
+        if target.shape[-1] == ACTION_DIMS["eef"]:
+            target = eef_action_to_rotvec(target)
+    dim = RAW_ACTION_DIMS[action_space]
     if prediction.shape != target.shape or prediction.shape[-1] != dim:
         raise ValueError(f"Predictions and targets must have identical (...,{dim}) shapes")
     if not np.isfinite(prediction).all() or not np.isfinite(target).all():

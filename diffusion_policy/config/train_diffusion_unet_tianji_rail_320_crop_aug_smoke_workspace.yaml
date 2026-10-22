@@ -1,0 +1,21 @@
+# 导轨 UNet；数据路径和动作空间在命令行指定。
+# 增强仅在训练启用；同一路相机的历史帧共享随机参数。
+# 短训练仅减少轮数与批次，不连接设备。
+defaults:
+- train_diffusion_unet_tianji_rail_320_crop_aug_workspace
+- _self_
+task:
+  env_runner:
+    max_windows: 2
+dataloader:
+  batch_size: 2
+  num_workers: 0
+  persistent_workers: false
+training:
+  num_epochs: 2
+  max_train_steps: 2
+  max_val_steps: 2
+  val_every: 1
+  lr_warmup_steps: 0
+  checkpoint_every: 1
+  sample_every: 1

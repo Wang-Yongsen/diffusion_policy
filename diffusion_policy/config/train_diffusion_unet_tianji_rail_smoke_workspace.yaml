@@ -1,8 +1,8 @@
-# 短训练使用同一UNet，只减少批次和轮数，不连接设备。
+# 导轨 UNet；数据路径和动作空间在命令行指定。
+# 短训练仅减少轮数与批次，不连接设备。
 defaults:
-  - train_diffusion_unet_tianji_rail_workspace
-  - _self_
-
+- train_diffusion_unet_tianji_rail_workspace
+- _self_
 task:
   env_runner:
     max_windows: 2

@@ -1,0 +1,8 @@
+{
+  "parent_frame": "tianji_left_base",
+  "child_frame": "head_color_optical",
+  "unit": "m",
+  "camera_serial": "405622076394",
+  "T_B_C": null,
+  "note": "填写实测的相机光学系到左臂基座的4x4矩阵；此模板不能运行真机。"
+}
