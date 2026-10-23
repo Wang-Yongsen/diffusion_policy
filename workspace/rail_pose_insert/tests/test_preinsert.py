@@ -11,10 +11,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(HERE), str(HERE.parents[1]), str(HERE.parents[2])]
+sys.path[:0] = [str(HERE), str(HERE.parents[1])]
 
 from rail_preinsert.core import (difference, interpolate_joints, load_calibration, load_config,
-                                digest, matrix, mean_pose, targets, transform, validate_scene, write_json)
+                                digest, matrix, mean_pose, targets, transform, write_json)
 from rail_preinsert.geometry import RobotGeometry
 from rail_preinsert.hardware import Hardware
 from rail_preinsert.planner import JointPath, Planner
@@ -107,25 +107,27 @@ class PlanningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             JointPath([np.zeros(7), np.ones(7)], float("nan"), .25)
 
-    def test_rrt_routes_around_obstacle_and_checks_segment_interiors(self):
-        world = NS(last_failure=None)
-        world.check = lambda q: not (.1 < q[0] < .3 and abs(q[1]) < .15)
+    def test_direct_joint_trajectory_reaches_target_without_detours(self):
         config = load_config(HERE / "config.yaml")
-        config.update(edge_resolution_rad=.02, planning_timeout_s=5, rrt_seed=7)
-        planner = Planner(config, ToyKinematics(), world)
+        planner = Planner(config, ToyKinematics())
         start, goal = np.zeros(7), T([.4, 0, 0])
-        self.assertFalse(planner.edge(start, np.r_[.4, np.zeros(6)]))
         path = planner.plan(start, goal)
-        self.assertGreater(len(path.points), 2)
-        for a, b in zip(path.points, path.points[1:]):
-            for u in np.linspace(0, 1, 200):
-                self.assertTrue(world.check(a*(1-u) + b*u))
+        self.assertEqual(len(path.points), 2)
+        np.testing.assert_allclose(path.at(path.duration / 2), np.r_[.2, np.zeros(6)])
+        np.testing.assert_allclose(matrix(planner.kinematics.fk("left", path.points[-1])), goal)
 
-    def test_collision_at_goal_is_rejected(self):
-        world = NS(last_failure={"parts": ["rail", "pin"]}, check=lambda q: q[0] < .2)
-        planner = Planner(load_config(HERE / "config.yaml"), ToyKinematics(), world)
+    def test_unreachable_joint_target_is_rejected(self):
+        planner = Planner(load_config(HERE / "config.yaml"), ToyKinematics())
         with self.assertRaises(ValueError):
-            planner.plan(np.zeros(7), T([.4, 0, 0]))
+            planner.plan(np.zeros(7), T([1.5, 0, 0]))
+
+    def test_joint_and_coupled_wrist_limits_still_reject_invalid_paths(self):
+        planner = Planner(load_config(HERE / "config.yaml"), ToyKinematics())
+        for bad in (np.r_[1.1, np.zeros(6)], np.r_[np.zeros(5), .99, .99]):
+            with self.subTest(joints=bad):
+                self.assertFalse(planner.valid(bad))
+                with self.assertRaises(ValueError):
+                    planner.validate_path([np.zeros(7), bad])
 
     def test_native_base_registration_matches_official_fk_away_from_zero(self):
         from diffusion_policy.third_party.bimanual_teleop.devices.tianji.model import TianjiKinematics
@@ -213,12 +215,12 @@ class RuntimeTests(unittest.TestCase):
 
 
 class EndpointTests(unittest.TestCase):
-    def test_preinsert_visual_verification_rejects_low_or_tilted_rail(self):
+    def test_preinsert_visual_verification_rejects_position_and_rotation_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             config = load_config(HERE / "config.yaml")
             config["calibration"] = str(Path(directory) / "calibration.json")
-            config["visual_position_tolerance_m"] = .1
-            config["visual_rotation_tolerance_rad"] = .2
+            config["visual_position_tolerance_m"] = .005
+            config["visual_rotation_tolerance_rad"] = .035
             write_json(config["calibration"], {"test_data": True, "parent_frame": "tianji_left_base",
                 "child_frame": "head_color_optical", "camera_serial": "test", "unit": "m", "T_B_C": np.eye(4).tolist()})
             goal, pre = T([.5, .3, .8]), T([.5, .3, .82])
@@ -228,6 +230,7 @@ class EndpointTests(unittest.TestCase):
             result = verify_preinsert(config, report, observation, allow_test_data=True)
             self.assertEqual(result["status"], "preinsert_reached")
             self.assertFalse(result["insertion_executed"])
+            self.assertFalse(result["collision_checked"])
             low = pre.copy(); low[2, 3] -= .006
             observation["records"][0]["T_C_CAD"] = low.tolist()
             self.assertEqual(verify_preinsert(config, report, observation, allow_test_data=True)["status"], "preinsert_unverified")
@@ -242,21 +245,22 @@ class EndpointTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fresh live"):
             observation_poses(observation, {"camera_serial": "test"}, config["mesh"])
 
-    def test_unfilled_scene_template_is_rejected_before_device_start(self):
-        with self.assertRaises(ValueError):
-            validate_scene(HERE / "calibrations/scene.example.json")
-
     def test_changed_geometry_invalidates_saved_execution_plan(self):
         with tempfile.TemporaryDirectory() as directory:
             config = {"joint_speed_rad_s": .12, "joint_acceleration_rad_s2": .25}
-            report = {"test_data": False, "end_stage": "preinsert", "joint_speed_rad_s": .12, "joint_acceleration_rad_s2": .25}
-            for key in ("calibration", "target", "scene", "mesh", "urdf", "manifest"):
+            report = {"schema_version": 2, "collision_checked": False, "test_data": False,
+                      "end_stage": "preinsert", "joint_speed_rad_s": .12, "joint_acceleration_rad_s2": .25}
+            for key in ("calibration", "target", "mesh", "urdf", "manifest"):
                 path = Path(directory) / key; path.write_text("original")
                 config[key] = str(path); report[f"{key}_sha256"] = digest(path)
             check_plan_inputs(config, report)
-            Path(config["scene"]).write_text("changed")
+            Path(config["mesh"]).write_text("changed")
             with self.assertRaises(ValueError):
                 check_plan_inputs(config, report)
+
+    def test_old_plan_must_be_regenerated(self):
+        with self.assertRaisesRegex(ValueError, "Regenerate"):
+            check_plan_inputs({}, {"schema_version": 1, "test_data": False, "end_stage": "preinsert"})
 
 
 if __name__ == "__main__":

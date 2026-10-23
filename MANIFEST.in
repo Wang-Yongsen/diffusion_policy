@@ -1,0 +1,12 @@
+recursive-include workspace/rail_pose_insert *.py *.yaml *.md *.json
+prune workspace/rail_pose_insert/outputs
+prune workspace/rail_pose_insert/calibration_runs
+exclude workspace/rail_pose_insert/calibrations/head_to_left_base.json
+exclude workspace/rail_pose_insert/calibrations/scene.json
+exclude workspace/rail_pose_insert/targets/rail_goal.json
+prune third_party/foundationpose/workspace/outputs
+prune third_party/foundationpose/mycpp/build
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude *.pth *.pt *.ckpt *.safetensors *.onnx
+global-exclude *.mp4 *.avi *.mov *.mkv *.gif

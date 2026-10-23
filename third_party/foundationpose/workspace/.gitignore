@@ -1,0 +1,9 @@
+.bootstrap/
+.cache/
+**/__pycache__/
+.pytest_cache/
+/datasets/
+/weights/
+/outputs/
+/deployment/
+vendor/*/.git/

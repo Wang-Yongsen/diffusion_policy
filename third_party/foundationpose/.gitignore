@@ -1,0 +1,19 @@
+# Generated files and local experiment data.
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.cache/
+.bootstrap/
+.pytest_cache/
+.env
+.venv/
+workspace/outputs/
+workspace/datasets/
+workspace/deployment/
+workspace/weights/
+# Pretrained parameters remain local; only placement instructions are versioned.
+weights/*
+!weights/README.md

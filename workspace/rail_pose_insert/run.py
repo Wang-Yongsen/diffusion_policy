@@ -15,10 +15,9 @@ import time
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1]))
-sys.path.insert(0, str(HERE.parents[2]))
+sys.path[:0] = [str(HERE), str(HERE.parents[1])]
 
-from rail_preinsert.core import (digest, load_calibration, load_config, load_target, mean_pose, validate_scene,
+from rail_preinsert.core import (digest, load_calibration, load_config, load_target, mean_pose,
                                 read_json, write_json)
 
 
@@ -79,10 +78,6 @@ def check(config):
             load_target(config["target"], calibration, config["mesh"])
         except Exception as error:
             problems.append(f"Target: {error}")
-    try:
-        validate_scene(config["scene"])
-    except Exception as error:
-        problems.append(f"Scene: {error}")
     print(json.dumps({"end_stage": "preinsert", "ready_for_live_configuration": not problems,
                       "problems": problems}, ensure_ascii=False, indent=2))
     return 1 if problems else 0
@@ -159,14 +154,13 @@ def plan_process(config, directory, hardware, cancelled):
 
 
 def live(config, args):
-    from home_tianji_rail import MotionTerminal
+    from diffusion_policy.real_world.tianji.terminal import MotionTerminal
     from rail_preinsert.hardware import Hardware
     from rail_preinsert.perception import Perception
     from rail_preinsert.workflow import hand_references, check_plan_inputs, verify_preinsert
     # Validate all physical inputs before opening or enabling a device.
     calibration, _ = load_calibration(config["calibration"])
     load_target(config["target"], calibration, config["mesh"])
-    validate_scene(config["scene"])
     references = hand_references(config)
     log = Log(args.output)
     hardware, perception = None, None
@@ -310,7 +304,7 @@ def main():
     run_parser = sub.add_parser("run", help="默认只读设备；--motion 才允许键盘触发动作")
     run_parser.add_argument("--motion", action="store_true")
     run_parser.add_argument("--output", type=Path, required=True)
-    replay_parser = sub.add_parser("replay", help="重查已保存路径并输出 PNG，不连接设备")
+    replay_parser = sub.add_parser("replay", help="检查关节限位并重放轨迹到 PNG，不连接设备")
     replay_parser.add_argument("--plan", type=Path, required=True)
     replay_parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

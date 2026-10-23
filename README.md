@@ -45,8 +45,8 @@ python -m diffusion_policy.cli.tianji --help
 | `diffusion_policy/` | 数据、模型、训练、评估与命令入口 |
 | `docs/tianji-rail/` | 当前操作说明 |
 | `tests/` | 离线回归 |
-| `third_party/` | 固定设备依赖与许可证 |
-| `workspace/` | 独立插入实验，不属于策略主流程 |
+| `third_party/` | 设备 SDK、FoundationPose 源码、任务模型及标定工具 |
+| `workspace/` | [导轨预插入实验](workspace/rail_pose_insert/README.md)，依赖已内置 |
 | `plan/` | 实施计划 |
 
 ## 上游

@@ -171,12 +171,12 @@ class Hardware:
                         or 1.025*abs(q[5]) + abs(q[6]) >= np.radians(110.5)):
                     raise RuntimeError("Arm command outside joint/coupled wrist limits")
                 if np.max(np.abs(state["full_joints"][:7] - q)) > self.config["arm_tracking_error_rad"]:
-                    raise RuntimeError("Actual left arm departed from checked trajectory")
+                    raise RuntimeError("Actual left arm departed from commanded trajectory")
                 if reference is not None:
                     if np.max(np.abs(state["full_joints"][7:14] - reference[7:14])) > self.config["right_arm_drift_rad"]:
-                        raise RuntimeError("Right arm moved from collision planning state")
+                        raise RuntimeError("Right arm moved from recorded planning state")
                     if np.max(np.abs(state["full_joints"][14:] - reference[14:])) > self.config["hand_shape_drift_rad"]:
-                        raise RuntimeError("Measured hand shape departed from collision planning state")
+                        raise RuntimeError("Measured hand shape departed from recorded planning state")
                 now = time.monotonic_ns()
                 command = DeviceCommand("tianji", f"rail-{now}", TianjiJointCommand({"left": tuple(q)}, {}),
                                         (), now, now + 50_000_000, self.arm_profile.profile_id)

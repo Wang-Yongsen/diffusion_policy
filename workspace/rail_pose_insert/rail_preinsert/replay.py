@@ -1,30 +1,29 @@
-"""Recheck saved paths and render geometry without loading a device driver."""
+"""Replay joint trajectories and render link poses without connecting devices."""
 from pathlib import Path
 
 import numpy as np
 import trimesh
 
 from .core import digest, matrix, read_json, write_json
-from .geometry import CollisionWorld
+from .geometry import RobotGeometry
 from .planner import JointPath, Planner
 
 
 def replay(config, kinematics, plan_path, output):
     data = read_json(plan_path)
+    if data.get("schema_version") != 2 or data.get("collision_checked") is not False:
+        raise ValueError("Regenerate the plan using the current direct interpolation workflow")
     if data.get("end_stage") != "preinsert" or data.get("model_sha256") != kinematics.model.digest:
         raise ValueError("Plan stage or kinematic model mismatch")
-    for key, plan_key in [("mesh", "mesh_sha256"), ("scene", "scene_sha256"),
+    for key, plan_key in [("mesh", "mesh_sha256"),
                           ("calibration", "calibration_sha256"), ("target", "target_sha256"), ("urdf", "urdf_sha256"),
                           ("manifest", "manifest_sha256")]:
         if digest(config[key]) != data[plan_key]:
             raise ValueError(f"{key} changed since planning")
-    world = CollisionWorld(config, kinematics, data["initial_full_joints"], data["targets"]["T_F_O"],
-                           data["targets"]["T_B_O_goal"], allow_test_data=data["test_data"])
-    planner = Planner(config, kinematics, world)
+    frames = RobotGeometry(config, kinematics)
+    planner = Planner(config, kinematics)
     points = np.asarray(data["joint_waypoints_rad"])
-    for a, b in zip(points, points[1:]):
-        if not planner.edge(a, b):
-            raise ValueError(f"Saved path no longer collision-free: {world.last_failure}")
+    planner.validate_path(points)
     path = JointPath(points, data["joint_speed_rad_s"], data["joint_acceleration_rad_s2"])
     directory = Path(output); directory.mkdir(parents=True, exist_ok=False)
     import matplotlib
@@ -45,16 +44,11 @@ def replay(config, kinematics, plan_path, output):
         ax.add_collection3d(Line3DCollection(xyz[edges], colors="tab:blue", alpha=.2))
     centres = np.asarray(centres)
     ax.plot(*centres.T, color="tab:blue", label="rail centre")
-    for p in world.parts:
-        if p.link is None and p.name != "rail":
-            xyz = trimesh.bounds.corners(np.array([p.vertices.min(axis=0), p.vertices.max(axis=0)]))
-            xyz = xyz @ p.local[:3, :3].T + p.local[:3, 3]
-            ax.add_collection3d(Line3DCollection(xyz[edges], colors="tab:orange", alpha=.8))
     all_xyz = list(centres)
     for side, indices, suffix in [("left", slice(0, 7), "L"), ("right", slice(7, 14), "R")]:
         for q7, alpha in [(points[0], .35), (points[-1], 1.)]:
             q = np.array(data["initial_full_joints"]); q[:7] = q7
-            poses = world.model.poses(q)
+            poses = frames.poses(q)
             xyz = np.array([poses[f"Link{i}_{suffix}"][:3, 3] for i in range(1, 8)]
                            + [poses[f"TCP_Link_{suffix}"][:3, 3]])
             ax.plot(*xyz.T, color="tab:green" if side == "left" else "gray", alpha=alpha)
@@ -67,7 +61,8 @@ def replay(config, kinematics, plan_path, output):
     ax.set_box_aspect((1, 1, 1)); ax.legend(); fig.tight_layout()
     fig.savefig(directory / "path.png", dpi=130); plt.close(fig)
     report = {"status": "offline_path_verified", "end_stage": "preinsert", "test_data": data["test_data"],
-              "duration_s": path.duration, "configurations_checked": world.check_count,
+              "duration_s": path.duration, "collision_checked": False,
+              "verification": "joint limits and trajectory replay only",
               "hardware_connected": False, "path_image": str(directory / "path.png")}
     write_json(directory / "result.json", report)
     return report

@@ -1,13 +1,32 @@
 """File-based request/reply bridge to the isolated FoundationPose environment."""
 from __future__ import annotations
 
-import subprocess
 import os
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 from uuid import uuid4
 
 from .core import HERE, read_json, write_json
+
+
+def python_command(config):
+    """Select the GPU interpreter without embedding the source machine's paths."""
+    explicit = os.environ.get("FOUNDATIONPOSE_PYTHON") or config.get("foundationpose_python")
+    if explicit:
+        return [str(explicit)]
+    name = config.get("foundationpose_env", "foundationpose")
+    if Path(sys.prefix).name == name:
+        return [sys.executable]
+    sibling = Path(sys.prefix).parent / name / ("python.exe" if os.name == "nt" else "bin/python")
+    if sibling.is_file():
+        return [str(sibling)]
+    conda = os.environ.get("CONDA_EXE") or shutil.which("conda")
+    if not conda:
+        raise RuntimeError("Create the FoundationPose environment or set FOUNDATIONPOSE_PYTHON")
+    return [conda, "run", "--no-capture-output", "-n", name, "python"]
 
 
 class Perception:
@@ -16,7 +35,7 @@ class Perception:
         self.cancelled, self.process = cancelled, None
         self.directory.mkdir(parents=True, exist_ok=False)
         self.log = (self.directory / "worker.log").open("w")
-        command = [config["foundationpose_python"], str(HERE / "perception_worker.py"),
+        command = python_command(config) + [str(HERE / "perception_worker.py"),
                    "--foundationpose-root", config["foundationpose_root"], "--mesh", config["mesh"],
                    "--camera-serial", camera_serial, "--serve", str(self.directory)]
         try:

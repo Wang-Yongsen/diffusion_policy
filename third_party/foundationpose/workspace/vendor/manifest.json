@@ -1,0 +1,14 @@
+{
+  "sldprt-format-research": {
+    "url": "https://github.com/blussyya/sldprt-format-research.git",
+    "commit": "93b49335cfcd8b47e93878a0d9935c376a86169d"
+  },
+  "nvdiffrast": {
+    "url": "https://github.com/NVlabs/nvdiffrast.git",
+    "commit": "253ac4fcea7de5f396371124af597e6cc957bfae"
+  },
+  "pytorch3d": {
+    "url": "https://github.com/facebookresearch/pytorch3d.git",
+    "commit": "88e182f989c80836f4bd744e0d9cb1852762ce01"
+  }
+}

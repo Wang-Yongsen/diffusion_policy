@@ -10,7 +10,9 @@
     "Default configurations resolve to host package resources",
     "Bundled SDK README uses project-local documentation",
     "2026-10-14: removed offline finalization/conversion CLI, spool/storage code and its unused console/affinity helpers; retained camera/config/sink for live observation",
-    "2026-10-16: synced camera ordering from bimanual-teleop 284b1e311b13d81e5bb65b68f96c4e3da7ab7c6f; camera_1 is the robot left arm with its RGB rotated 180 degrees, camera_2 is the robot right arm, and camera metadata records image_rotation_deg"
+    "2026-10-16: synced camera ordering from bimanual-teleop 284b1e311b13d81e5bb65b68f96c4e3da7ab7c6f; camera_1 is the robot left arm with its RGB rotated 180 degrees, camera_2 is the robot right arm, and camera metadata records image_rotation_deg",
+    "2026-10-23: added URDF RobotModel from the source sim/kinematics.py, replacing deferred simulation imports with NumPy/SciPy; no simulator dependency",
+    "2026-10-23: resolve host configuration through diffusion_policy.config so relocated checkouts work from either their root or parent directory"
   ],
   "files": [
     {
@@ -101,7 +103,7 @@
     {
       "path": "bimanual_teleop/paths.py",
       "source_sha256": "b168c59696bf0890905db0cb5bf21e456a38b832296773d0af216b0fcf330c96",
-      "vendored_sha256": "b1881c311f7affe72438ab18ebc42c1f7ebaef99fc6458e4e9fa81becaad9078"
+      "vendored_sha256": "826c821613eda13c13a14e09b700b15caa2bfdb2051e50b805ad57d6f1879126"
     },
     {
       "path": "bimanual_teleop/recording/__init__.py",
@@ -177,6 +179,11 @@
       "path": "bimanual_teleop/vendor/tianji/SDK_PYTHON/fx_kine.py",
       "source_sha256": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5",
       "vendored_sha256": "c6603de2f315dfc0fc85369be07165af7da0118e3cc4006ca94f8787c04087c5"
+    },
+    {
+      "path": "bimanual_teleop/kinematics.py",
+      "source_sha256": "cf1f08b025a1792ddbc22605ebd1f27294dfaaffb10b6f95eb3a9c224009b73f",
+      "vendored_sha256": "7389a73844bf6f1541f119788ed5b955e153518bc0b05e2c72bd745a6760de9c"
     }
   ],
   "scope_revision_date": "2026-10-14",

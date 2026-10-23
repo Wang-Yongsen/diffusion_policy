@@ -19,18 +19,19 @@ from OCP.TopoDS import TopoDS
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project-root", type=Path, required=True)
+    parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[3],
+                        help="diffusion_policy project root")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     root = args.project_root.resolve()
-    sim = root / "bimanual-teleop/bimanual_teleop/sim"
-    manifest_path = sim / "assets/generated/manifest.json"
+    assets = root / "third_party/rail_assets"
+    manifest_path = assets / "generated/manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    fixture = sim / "assets/source/rail_task/导轨台长.step"
+    fixture = assets / "source/导轨台长.step"
     digest = hashlib.sha256(fixture.read_bytes()).hexdigest()
     if digest != manifest["cad"]["sources"]["fixture"]["sha256"]:
         raise ValueError("Fixture source does not match generated geometry manifest")
-    pose_model = json.loads((root / "FoundationPose/workspace/input/model/rail.json").read_text())
+    pose_model = json.loads((root / "third_party/foundationpose/workspace/input/model/rail.json").read_text())
     if pose_model["source_sha256"] != manifest["cad"]["sources"]["rail"]["sha256"]:
         raise ValueError("Perception and task CAD use different source rails")
     # The existing CAD conversion identifies this support plane in source millimetres.

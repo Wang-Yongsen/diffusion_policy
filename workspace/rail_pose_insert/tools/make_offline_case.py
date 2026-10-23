@@ -9,9 +9,8 @@ import yaml
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE.parents[1]))
-sys.path.insert(0, str(HERE.parents[2]))
 
-from rail_preinsert.core import PROJECT, digest, load_config, matrix, write_json
+from rail_preinsert.core import DP_ROOT, digest, load_config, matrix, write_json
 from diffusion_policy.third_party.bimanual_teleop.devices.tianji.model import TianjiKinematics
 
 
@@ -21,17 +20,8 @@ def main():
     args = parser.parse_args()
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=False)
     config = load_config(HERE / "config.yaml")
-    episode = PROJECT / "bimanual-teleop/recordings/rail_place3/episode_000034"
-    info = json.loads((episode / "episode.json").read_text())
-    stamp = info["start_ns"] + int(9.25e9)
-    joints = []
-    for kind, width in [("arms", 13), ("hands", 20)]:
-        for side in ["left", "right"]:
-            values = np.fromfile(episode / f"raw_spool/streams/{kind}__{side}.bin",
-                                 dtype=[("t", "<i8"), ("sequence", "<i8"), ("v", "<f8", width)])
-            selected = values[np.argmin(np.abs(values["t"] - stamp))]["v"]
-            joints.extend(selected[:7] if kind == "arms" else selected)
-    q = np.asarray(joints)
+    reference = json.loads((DP_ROOT / "third_party/rail_assets/examples/joint_state.json").read_text())
+    q = np.asarray(reference["full_joints"])
     k = TianjiKinematics()
     initial = matrix(k.fk("left", tuple(q[:7])))
     # Construct a centred rail orientation and a nearby reachable endpoint.
@@ -57,12 +47,11 @@ def main():
     state = {"timestamp_ns": 1_050_000_000, "full_joints": q.tolist(), "model_sha256": k.model.digest,
              "left_joint_history": [[t, q[:7].tolist()] for t in range(1_000_000_000, 1_060_000_000, 10_000_000)],
              "test_data": True,
-             "note": "Recorded joint configuration, synthetic grasp/camera/target/environment. Not a hardware success."}
-    scene = {"parent_frame": "tianji_left_base", "unit": "m", "test_data": True, "obstacles": []}
+             "note": "Recorded joint configuration, synthetic grasp/camera/target. Not a hardware success."}
     for name, value in [("calibration", calibration), ("target", target), ("observation", observation),
-                        ("state", state), ("scene", scene)]:
+                        ("state", state)]:
         write_json(out / f"{name}.json", value)
-    for key, filename in [("calibration", "calibration"), ("target", "target"), ("scene", "scene")]:
+    for key, filename in [("calibration", "calibration"), ("target", "target")]:
         config[key] = str(out / f"{filename}.json")
     config.pop("config_path", None)
     (out / "config.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))

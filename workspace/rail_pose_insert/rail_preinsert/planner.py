@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import time
 import numpy as np
 
 from .core import difference, matrix, pose, vector
 
 
 class JointPath:
-    """Quintic segments with zero speed/acceleration at each checked waypoint."""
+    """Quintic segments with zero speed/acceleration at each waypoint."""
     def __init__(self, waypoints, speed, acceleration):
         self.points = np.asarray(waypoints, dtype=float)
         if self.points.ndim != 2 or self.points.shape[1] != 7 or not np.isfinite(self.points).all():
@@ -33,93 +32,44 @@ class JointPath:
 
 
 class Planner:
-    def __init__(self, config, kinematics, world):
-        self.config, self.kinematics, self.world = config, kinematics, world
+    """Solve a joint target and interpolate directly, checking joint limits only."""
+    def __init__(self, config, kinematics):
+        self.config, self.kinematics = config, kinematics
         arm = kinematics.model.arm("left")
         self.lower = np.asarray(arm.lower_rad) + .001
         self.upper = np.asarray(arm.upper_rad) - .001
-        self.rng = np.random.default_rng(config["rrt_seed"])
-        self.resolution = config["edge_resolution_rad"]
-        self.deadline = float("inf")
 
     def valid(self, q):
-        return (np.all(q >= self.lower) and np.all(q <= self.upper)
-                and 1.025 * abs(q[5]) + abs(q[6]) < np.radians(110.5) - .001
-                and self.world.check(q))
+        q = np.asarray(q, dtype=float)
+        return (q.shape == (7,) and np.isfinite(q).all()
+                and np.all(q >= self.lower) and np.all(q <= self.upper)
+                and 1.025 * abs(q[5]) + abs(q[6]) < np.radians(110.5) - .001)
 
-    def edge(self, start, end):
-        count = max(1, int(np.ceil(np.max(np.abs(end - start)) / self.resolution)))
-        for fraction in np.linspace(0, 1, count + 1):
-            if time.monotonic() > self.deadline:
-                raise TimeoutError("Collision planning exceeded its time budget")
-            if not self.valid(start + fraction * (end - start)):
-                return False
-        return True
-
-    def _extend(self, tree, parents, target):
-        nearest = int(np.argmin(np.linalg.norm(np.asarray(tree) - target, axis=1)))
-        delta = target - tree[nearest]
-        distance = np.linalg.norm(delta)
-        q = target if distance <= self.config["rrt_step_rad"] else tree[nearest] + delta / distance * self.config["rrt_step_rad"]
-        if not self.edge(tree[nearest], q):
-            return None, False
-        tree.append(q.copy()); parents.append(nearest)
-        return len(tree) - 1, distance <= self.config["rrt_step_rad"]
-
-    @staticmethod
-    def _trace(tree, parents, index):
-        path = []
-        while index >= 0:
-            path.append(tree[index]); index = parents[index]
-        return list(reversed(path))
+    def validate_path(self, points):
+        points = np.asarray(points, dtype=float)
+        if points.ndim != 2 or points.shape[1] != 7 or len(points) < 2:
+            raise ValueError("Expected at least two Nx7 joint waypoints")
+        if not all(self.valid(q) for q in points):
+            raise ValueError("Joint path exceeds joint or coupled wrist limits")
+        # Joint boxes and the coupled absolute-value wrist bound are convex.
+        # Quintic interpolation stays on each segment between its endpoints.
 
     def plan(self, initial, target_flange):
         initial = vector(initial, 7)
-        self.deadline = time.monotonic() + self.config["planning_timeout_s"]
         if not self.valid(initial):
-            raise ValueError(f"Initial grasp/model is in collision or outside limits: {self.world.last_failure}")
-        # Try multiple redundant IK seeds while retaining an exact checked joint goal.
-        goal = None
+            raise ValueError("Initial joint state exceeds joint or coupled wrist limits")
         for seed in [initial, (initial + (self.lower + self.upper)/2)/2,
                      np.radians([30, -60, -34, -52, 30, 12, 4])]:
             try:
                 candidate = np.asarray(self.kinematics.ik("left", pose(target_flange), tuple(seed)))
+                if not self.valid(candidate):
+                    continue
                 error = difference(matrix(self.kinematics.fk("left", tuple(candidate))), target_flange)
-                if error[0] < .0001 and error[1] < .0002 and self.valid(candidate):
-                    goal = candidate; break
+                if error[0] < .0001 and error[1] < .0002:
+                    points = [initial, candidate]
+                    self.validate_path(points)
+                    return JointPath(points, self.config["joint_speed_rad_s"],
+                                     self.config["joint_acceleration_rad_s2"])
             except RuntimeError:
                 continue
-        if goal is None:
-            raise ValueError(f"No reachable collision-free preinsert IK: {self.world.last_failure}")
-        if self.edge(initial, goal):
-            path = [initial, goal]
-        else:
-            a, b, pa, pb = [initial.copy()], [goal.copy()], [-1], [-1]
-            swapped, path = False, None
-            while time.monotonic() < self.deadline:
-                sample = b[0] if self.rng.random() < .15 else self.rng.uniform(self.lower, self.upper)
-                ia, _ = self._extend(a, pa, sample)
-                if ia is not None:
-                    while True:
-                        ib, reached = self._extend(b, pb, a[ia])
-                        if ib is None:
-                            break
-                        if reached:
-                            path = self._trace(a, pa, ia) + list(reversed(self._trace(b, pb, ib)))[1:]
-                            if swapped:
-                                path.reverse()
-                            break
-                    if path is not None:
-                        break
-                a, b, pa, pb, swapped = b, a, pb, pa, not swapped
-            if path is None:
-                raise TimeoutError("No collision-free path found within planning budget")
-            for _ in range(20):
-                if len(path) < 3 or time.monotonic() > self.deadline:
-                    break
-                i, j = sorted(self.rng.choice(len(path), 2, replace=False))
-                if j > i + 1 and self.edge(path[i], path[j]):
-                    path = path[:i + 1] + path[j:]
-        # Every edge, including shortcuts, has been checked at resolution_rad.
-        trajectory = JointPath(path, self.config["joint_speed_rad_s"], self.config["joint_acceleration_rad_s2"])
-        return trajectory
+        raise ValueError("No preinsert IK solution within joint and coupled wrist limits")

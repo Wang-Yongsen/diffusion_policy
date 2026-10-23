@@ -9,7 +9,7 @@ import sys
 import numpy as np
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(HERE), str(HERE.parents[1]), str(HERE.parents[2])]
+sys.path[:0] = [str(HERE), str(HERE.parents[1])]
 
 from rail_preinsert.core import digest, load_config, read_json, transform
 

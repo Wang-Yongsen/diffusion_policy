@@ -1,0 +1,260 @@
+{
+  "container": "modern (SolidWorks 2015+)",
+  "bytes": 147962,
+  "streams": [
+    {
+      "name": "Config-0-FeatureBodies/LocalBodies",
+      "bytes": 23016
+    },
+    {
+      "name": "Contents/3DExperienceExchange2",
+      "bytes": 12288
+    },
+    {
+      "name": "Contents/CMgr",
+      "bytes": 2177
+    },
+    {
+      "name": "Contents/CMgrHdr2",
+      "bytes": 117
+    },
+    {
+      "name": "Contents/CnfgObjs",
+      "bytes": 12
+    },
+    {
+      "name": "Contents/Config-0",
+      "bytes": 23399
+    },
+    {
+      "name": "Contents/Config-0-GhostPartition",
+      "bytes": 672
+    },
+    {
+      "name": "Contents/Config-0-LWDATA",
+      "bytes": 1405
+    },
+    {
+      "name": "Contents/Config-0-ModelHeader",
+      "bytes": 2139
+    },
+    {
+      "name": "Contents/Config-0-Partition",
+      "bytes": 40433
+    },
+    {
+      "name": "Contents/Config-0-ResolvedFeatures",
+      "bytes": 55402
+    },
+    {
+      "name": "Contents/CusProps",
+      "bytes": 32
+    },
+    {
+      "name": "Contents/Definition",
+      "bytes": 3739
+    },
+    {
+      "name": "Contents/DisplayLists",
+      "bytes": 144494
+    },
+    {
+      "name": "Contents/OleItems",
+      "bytes": 4
+    },
+    {
+      "name": "Contents/PMISemanticDataDB",
+      "bytes": 12288
+    },
+    {
+      "name": "Contents/eModelLic",
+      "bytes": 4
+    },
+    {
+      "name": "Header2",
+      "bytes": 2139
+    },
+    {
+      "name": "ModelStamps",
+      "bytes": 12
+    },
+    {
+      "name": "OleItemInformation/OLE_Item_Data",
+      "bytes": 4
+    },
+    {
+      "name": "SWIFT/Config0-Schema1",
+      "bytes": 1240
+    },
+    {
+      "name": "SwDocContentMgr/SwDocContentMgrInfo",
+      "bytes": 315
+    },
+    {
+      "name": "ThirdPty/Animator",
+      "bytes": 310
+    },
+    {
+      "name": "ThirdPty/CMMotionLoadMapU",
+      "bytes": 40
+    },
+    {
+      "name": "ThirdPtyStore/VisualStates",
+      "bytes": 1565
+    },
+    {
+      "name": "[Content_Types].xml",
+      "bytes": 556
+    },
+    {
+      "name": "_DL_VERSION_17000/DLUpdateStamp",
+      "bytes": 6
+    },
+    {
+      "name": "_MO_VERSION_17000/Biography",
+      "bytes": 1079
+    },
+    {
+      "name": "_MO_VERSION_17000/History",
+      "bytes": 101
+    },
+    {
+      "name": "_rels/.rels",
+      "bytes": 597
+    },
+    {
+      "name": "docProps/Config-0-Properties.xml",
+      "bytes": 699
+    },
+    {
+      "name": "docProps/ISolidWorksInformation.xml",
+      "bytes": 11770
+    },
+    {
+      "name": "docProps/OpenTime.xml",
+      "bytes": 444
+    },
+    {
+      "name": "docProps/app.xml",
+      "bytes": 570
+    },
+    {
+      "name": "docProps/core.xml",
+      "bytes": 523
+    },
+    {
+      "name": "docProps/custom.xml",
+      "bytes": 853
+    },
+    {
+      "name": "swXmlContents/Features",
+      "bytes": 776
+    },
+    {
+      "name": "swXmlContents/KeyWords",
+      "bytes": 2133
+    },
+    {
+      "name": "Preview",
+      "bytes": 85960
+    },
+    {
+      "name": "PreviewPNG",
+      "bytes": 15166
+    }
+  ],
+  "displayListsVersion": 17000,
+  "display": {
+    "format": "modern DisplayLists",
+    "faces": 55,
+    "triangles": 1896,
+    "surfaceTags": {
+      "4001": 31,
+      "4002": 13,
+      "4006": 11
+    },
+    "rejected": 0,
+    "warnings": 24,
+    "errors": []
+  },
+  "partitions": [
+    {
+      "stream": "Config-0-FeatureBodies/LocalBodies",
+      "chain": "embedded",
+      "sections": [
+        "plain"
+      ]
+    },
+    {
+      "stream": "Contents/Config-0-GhostPartition",
+      "chain": "complete",
+      "sections": [
+        "partition"
+      ]
+    },
+    {
+      "stream": "Contents/Config-0-Partition",
+      "chain": "complete",
+      "sections": [
+        "partition",
+        "deltas"
+      ]
+    },
+    {
+      "stream": "Contents/Config-0-ResolvedFeatures",
+      "chain": "embedded",
+      "sections": [
+        "plain"
+      ]
+    }
+  ],
+  "brep": {
+    "source": "Contents/Config-0-Partition",
+    "schema": "SCH_3501210_35102_13006",
+    "nodes": 1721,
+    "census": {
+      "WORLD": 1,
+      "BODY": 1,
+      "ATTRIB_DEF": 12,
+      "ATT_DEF_ID": 12,
+      "ATTRIBUTE": 202,
+      "LIST": 1,
+      "SHELL": 2,
+      "B_SURFACE": 11,
+      "CIRCLE": 26,
+      "POINT": 96,
+      "REGION": 2,
+      "EDGE": 154,
+      "VERTEX": 96,
+      "FIN": 308,
+      "LOOP": 80,
+      "LINE": 106,
+      "TRIMMED_CURVE": 10,
+      "GEOMETRIC_OWNER": 50,
+      "SP_CURVE": 4,
+      "PLANE": 31,
+      "B_CURVE": 4,
+      "NURBS_CURVE": 4,
+      "CURVE_DATA": 4,
+      "BSPLINE_VERTICES": 15,
+      "KNOT_MULT": 26,
+      "KNOT_SET": 26,
+      "FACE": 55,
+      "INTERSECTION": 18,
+      "CHART": 18,
+      "LIMIT": 36,
+      "INTERSECTION_DATA": 18,
+      "NURBS_SURF": 11,
+      "SURFACE_DATA": 11,
+      "CYLINDER": 13,
+      "REAL_VALUES": 55,
+      "INT_VALUES": 199,
+      "POINTER_LIS_BLOCK": 1,
+      "UNICODE_VALUES": 1,
+      "CHAR_VALUES": 1
+    },
+    "graphChecks": 4023,
+    "graphErrors": 0,
+    "error": null
+  }
+}

@@ -1,5 +1,9 @@
 # 本地依赖快照
 
+导轨预插入的完整项目依赖现已内置：`foundationpose/` 保存完整项目源码、导轨适配及 GPU 扩展源码（权重保留本地，不上传）；`rail_assets/` 保存机器人/夹具模型和离线样本；`camera_calibration/` 保存实机标定工具。它们与下述设备快照一起工作，不需要相邻 FoundationPose 或 bimanual-teleop 仓库。安装与运行见 [预插入说明](../workspace/rail_pose_insert/README.md)，新增文件来源和摘要见 `rail_insert_manifest.json`。
+
+标准 Python 库、CUDA/驱动及设备 SDK 的安装由环境文件和本地构建脚本定义。项目自包含指项目代码、权重及模型资源自包含，不复制整个 Conda 或操作系统。
+
 `third_party` 保存真机评估需要的设备控制、运动学、实时相机读取和SDK资源。本项目采用随仓库保存的快照，真机评估的设备接口不依赖相邻仓库。数据采集、整理和转换由 bimanual-teleop 维护，模型项目直接读取其输出的训练zarr。
 
 ```text

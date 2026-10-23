@@ -146,3 +146,39 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Local model weights and training checkpoints: never publish.
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+/third_party/foundationpose/weights/*
+!/third_party/foundationpose/weights/README.md
+
+# Generated native extensions are rebuilt from the bundled sources.
+/third_party/foundationpose/mycpp/native/
+
+# Local recordings, previews, and large upstream demonstration/test datasets.
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.gif
+/third_party/rail_assets/examples/rgbd/
+/third_party/foundationpose/workspace/vendor/**/*.npz
+/third_party/foundationpose/workspace/vendor/**/*.npy
+/third_party/foundationpose/workspace/vendor/**/*.pickle
+/third_party/foundationpose/workspace/vendor/**/*.pkl
+/third_party/foundationpose/workspace/vendor/**/*.sqlite
+/third_party/foundationpose/workspace/vendor/**/*.png
+/third_party/foundationpose/workspace/vendor/**/*.jpg
+/third_party/foundationpose/workspace/vendor/**/*.jpeg
+/third_party/foundationpose/workspace/vendor/**/*.obj
+/third_party/foundationpose/workspace/vendor/**/*.mtl
+
+# Task-local capture/validation outputs and credentials.
+/workspace/rail_pose_insert/calibration_runs/
+.env
+.env.*
+!.env.example

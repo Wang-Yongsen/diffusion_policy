@@ -1,0 +1,13 @@
+{
+  "model": "input/model/rail.obj",
+  "pose_batch_size": 8,
+  "use_amp": false,
+  "estimate_iterations": 5,
+  "track_iterations": 2,
+  "min_valid_depth_pixels": 64,
+  "max_depth_m": 3.0,
+  "max_translation_jump_m": 0.1,
+  "max_rotation_jump_deg": 45.0,
+  "max_frame_age_s": 0.5,
+  "camera": {"serial": "348122072137", "width": 640, "height": 480, "fps": 30}
+}

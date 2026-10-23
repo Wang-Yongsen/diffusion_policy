@@ -9,7 +9,6 @@ from scipy.spatial.transform import Rotation
 
 HERE = Path(__file__).resolve().parents[1]
 DP_ROOT = HERE.parents[1]
-PROJECT = DP_ROOT.parent
 
 
 def read_json(path):
@@ -134,7 +133,7 @@ def load_config(path):
     path = Path(path).resolve()
     data = yaml.safe_load(path.read_text())
     for key in ("arm_config", "hand_config", "mesh", "urdf", "manifest", "foundationpose_root",
-                "calibration", "target", "scene", "hand_reference"):
+                "calibration", "target", "hand_reference"):
         value = Path(data[key])
         data[key] = str((path.parent / value).resolve() if not value.is_absolute() else value)
     data["config_path"] = str(path)
@@ -142,10 +141,10 @@ def load_config(path):
         raise ValueError("This experiment ends at preinsert; insertion is not implemented")
     if not np.isclose(data["preinsert_offset_m"], .02):
         raise ValueError("This experiment uses a 20 mm preinsert offset")
-    for key in ("joint_speed_rad_s", "joint_acceleration_rad_s2", "collision_margin_m", "edge_resolution_rad",
+    for key in ("joint_speed_rad_s", "joint_acceleration_rad_s2",
                 "planning_timeout_s", "arm_tracking_error_rad", "hand_transition_s", "state_max_age_s",
                 "preinsert_position_tolerance_m", "preinsert_rotation_tolerance_rad", "settle_s",
-                "right_arm_drift_rad", "hand_shape_drift_rad", "rrt_step_rad", "visual_position_tolerance_m",
+                "right_arm_drift_rad", "hand_shape_drift_rad", "visual_position_tolerance_m",
                 "visual_rotation_tolerance_rad", "perception_timeout_s"):
         value = data[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
@@ -155,31 +154,4 @@ def load_config(path):
         raise ValueError("outward_axis_cad must be a unit vector")
     if not isinstance(data["perception_samples"], int) or not 1 <= data["perception_samples"] <= 10:
         raise ValueError("perception_samples must be an integer from 1 to 10")
-    return data
-
-
-def validate_scene(path, *, allow_test_data=False):
-    data = read_json(path)
-    if data.get("test_data", False) and not allow_test_data:
-        raise ValueError("Synthetic scene cannot be used on hardware")
-    if data.get("parent_frame") != "tianji_left_base" or data.get("unit") != "m":
-        raise ValueError("Scene must use tianji_left_base and metres")
-    obstacles = data.get("obstacles")
-    if not isinstance(obstacles, list) or (not obstacles and not allow_test_data):
-        raise ValueError("Measured table/bin obstacles are required")
-    names = set()
-    for item in obstacles:
-        if not isinstance(item.get("name"), str) or not item["name"] or item["name"] in names:
-            raise ValueError("Scene requires unique obstacle names")
-        names.add(item["name"])
-        transform(item.get("T_B_obstacle"), "obstacle T_B_obstacle")
-        if item.get("type") == "box":
-            size = vector(item.get("size_m"), 3, "obstacle size_m")
-            if np.any(size <= 0) or np.max(size) > 20:
-                raise ValueError("Obstacle dimensions must use positive metres")
-        elif item.get("type") == "mesh":
-            if not (Path(path).parent / item["mesh"]).is_file():
-                raise FileNotFoundError("Obstacle mesh is missing")
-        else:
-            raise ValueError("Obstacle type must be box or mesh")
     return data

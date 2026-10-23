@@ -10,7 +10,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(HERE), str(HERE.parents[1]), str(HERE.parents[2])]
+sys.path[:0] = [str(HERE), str(HERE.parents[1])]
 
 from rail_preinsert.core import digest, load_calibration, load_config, matrix, write_json
 from tools.export_head_calibration import export
