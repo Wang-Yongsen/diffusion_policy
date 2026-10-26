@@ -10,6 +10,7 @@ import sys
 import subprocess
 import signal
 import threading
+import tempfile
 import time
 
 import numpy as np
@@ -86,21 +87,24 @@ def check(config):
 def teach(config, args):
     from rail_preinsert.perception import Perception
     from rail_preinsert.workflow import observation_poses
+    from rail_preinsert.pose_alignment import RailPoseAlignment
     calibration, _ = load_calibration(config["calibration"])
     if args.observation:
         observation = read_json(args.observation)
     else:
-        directory = Path(args.output).resolve().parent / f"teach_{time.time_ns()}"
-        with_perception = Perception(config, directory, calibration["camera_serial"])
-        try:
-            print("导轨正确就位后，在相机窗口标注可见导轨区域。", flush=True)
-            observation = with_perception.measure(config["perception_samples"])
-        finally:
-            with_perception.close()
-    _, poses = observation_poses(observation, calibration, config["mesh"])
+        with tempfile.TemporaryDirectory(prefix="rail-teach-") as directory:
+            with_perception = Perception(config, Path(directory) / "perception", calibration["camera_serial"])
+            try:
+                print("导轨正确就位后，在相机窗口标注可见导轨区域。", flush=True)
+                observation = with_perception.measure(config["perception_samples"])
+            finally:
+                with_perception.close()
+    records, poses = observation_poses(observation, calibration, config["mesh"],
+                                alignment=RailPoseAlignment.from_config(config))
     target = {"schema_version": 1, "unit": "m", "frame": "T_C_CAD",
               "camera_serial": calibration["camera_serial"], "mesh_sha256": digest(config["mesh"]),
               "T_C_O_goal": mean_pose(poses).tolist(), "test_data": False,
+              "pose_alignment": [r.get("pose_alignment") for r in records],
               "observation": observation, "calibration_sha256_at_teach": digest(config["calibration"])}
     if Path(args.output).exists():
         raise FileExistsError("Target already exists; choose a new output rather than overwriting")
@@ -174,7 +178,7 @@ def live(config, args):
             value = hardware.snapshot()
             value = {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in value.items()}
             write_json(log.directory / "read_only_state.json", value)
-            print("只读观测已保存；未启用机械臂或灵巧手。")
+            print("只读设备反馈：" + json.dumps(value, ensure_ascii=False))
             return
         with MotionTerminal() as terminal:
             old_sigint = signal.signal(signal.SIGINT, lambda *_: hardware.pause("Operator Ctrl+C: retain grasp"))
@@ -288,8 +292,9 @@ def live(config, args):
             raise RuntimeError("; ".join(cleanup_errors))
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__,
+        epilog="不带参数直接启动左臂预插入；只读请运行 read_preinsert_state.py。")
     parser.add_argument("--config", type=Path, default=HERE / "config.yaml")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="只检查本地输入，不连接设备")
@@ -303,11 +308,12 @@ def main():
     plan_parser.add_argument("--allow-test-data", action="store_true", help="仅离线接受明确标记的测试数据")
     run_parser = sub.add_parser("run", help="默认只读设备；--motion 才允许键盘触发动作")
     run_parser.add_argument("--motion", action="store_true")
-    run_parser.add_argument("--output", type=Path, required=True)
+    run_parser.add_argument("--output", type=Path, help="可选：保留记录；默认临时运行，退出后清理")
     replay_parser = sub.add_parser("replay", help="检查关节限位并重放轨迹到 PNG，不连接设备")
     replay_parser.add_argument("--plan", type=Path, required=True)
     replay_parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(argv or ["run", "--motion"])
     config = load_config(args.config)
     try:
         if args.command == "check":
@@ -320,7 +326,12 @@ def main():
             from rail_preinsert.replay import replay
             print(json.dumps(replay(config, kinematics(), args.plan, args.output), ensure_ascii=False))
         else:
-            live(config, args)
+            if args.output is None:
+                with tempfile.TemporaryDirectory(prefix="rail-preinsert-") as directory:
+                    args.output = Path(directory) / "run"
+                    live(config, args)
+            else:
+                live(config, args)
         return 0
     except (ValueError, RuntimeError, OSError) as error:
         print(f"实验停止：{error}", file=sys.stderr)

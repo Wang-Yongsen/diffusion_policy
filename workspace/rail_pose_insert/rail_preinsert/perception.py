@@ -1,8 +1,7 @@
-"""File-based request/reply bridge to the isolated FoundationPose environment."""
+"""File-based perception process bridge, using the shared DP environment."""
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -13,20 +12,11 @@ from .core import HERE, read_json, write_json
 
 
 def python_command(config):
-    """Select the GPU interpreter without embedding the source machine's paths."""
+    """Use the active DP interpreter for both control and FoundationPose."""
     explicit = os.environ.get("FOUNDATIONPOSE_PYTHON") or config.get("foundationpose_python")
     if explicit:
         return [str(explicit)]
-    name = config.get("foundationpose_env", "foundationpose")
-    if Path(sys.prefix).name == name:
-        return [sys.executable]
-    sibling = Path(sys.prefix).parent / name / ("python.exe" if os.name == "nt" else "bin/python")
-    if sibling.is_file():
-        return [str(sibling)]
-    conda = os.environ.get("CONDA_EXE") or shutil.which("conda")
-    if not conda:
-        raise RuntimeError("Create the FoundationPose environment or set FOUNDATIONPOSE_PYTHON")
-    return [conda, "run", "--no-capture-output", "-n", name, "python"]
+    return [sys.executable]
 
 
 class Perception:

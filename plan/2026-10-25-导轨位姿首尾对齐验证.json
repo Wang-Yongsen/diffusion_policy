@@ -1,0 +1,209 @@
+{
+  "scope": "Recorded observations plus synthetic coordinate flips; not hardware accuracy validation.",
+  "samples": [
+    {
+      "source": "recorded_SAM_cycle_1",
+      "observed_alignment": {
+        "hypothesis": "identity",
+        "approximate_symmetry": true,
+        "center_cad_m": [
+          4.82e-06,
+          0.239999995,
+          -0.004112245
+        ],
+        "T_CAD_raw_CAD_aligned": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "relative_xyz_deg": [
+          1.2259058723536798,
+          1.8899348150662099,
+          4.275025762074436
+        ],
+        "raw_relative_xyz_deg": [
+          1.2259058723536798,
+          1.8899348150662099,
+          4.275025762074436
+        ],
+        "rotation_error_deg": 4.814061001370248,
+        "max_axis_rotation_deg": 45.0,
+        "within_limit": true,
+        "within_typical_range": true
+      },
+      "synthetic_flip_alignment": {
+        "hypothesis": "cad_z_half_turn",
+        "approximate_symmetry": true,
+        "center_cad_m": [
+          4.82e-06,
+          0.239999995,
+          -0.004112245
+        ],
+        "T_CAD_raw_CAD_aligned": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            9.64e-06
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.47999999
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "relative_xyz_deg": [
+          1.2259058723536798,
+          1.8899348150662099,
+          4.275025762074436
+        ],
+        "raw_relative_xyz_deg": [
+          -1.2259058723536742,
+          -1.8899348150661972,
+          -175.72497423792555
+        ],
+        "rotation_error_deg": 4.814061001370248,
+        "max_axis_rotation_deg": 45.0,
+        "within_limit": true,
+        "within_typical_range": true
+      },
+      "synthetic_flip_recovery_max_abs_error": 0.0
+    },
+    {
+      "source": "recorded_SAM_cycle_2",
+      "observed_alignment": {
+        "hypothesis": "identity",
+        "approximate_symmetry": true,
+        "center_cad_m": [
+          4.82e-06,
+          0.239999995,
+          -0.004112245
+        ],
+        "T_CAD_raw_CAD_aligned": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "relative_xyz_deg": [
+          1.1548006591630517,
+          9.129670952536,
+          4.830631616328743
+        ],
+        "raw_relative_xyz_deg": [
+          1.1548006591630517,
+          9.129670952536,
+          4.830631616328743
+        ],
+        "rotation_error_deg": 10.347829294485622,
+        "max_axis_rotation_deg": 45.0,
+        "within_limit": true,
+        "within_typical_range": true
+      },
+      "synthetic_flip_alignment": {
+        "hypothesis": "cad_z_half_turn",
+        "approximate_symmetry": true,
+        "center_cad_m": [
+          4.82e-06,
+          0.239999995,
+          -0.004112245
+        ],
+        "T_CAD_raw_CAD_aligned": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            9.64e-06
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.47999999
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "relative_xyz_deg": [
+          1.1548006591630517,
+          9.129670952536,
+          4.830631616328743
+        ],
+        "raw_relative_xyz_deg": [
+          -1.154800659163052,
+          -9.129670952535985,
+          -175.16936838367127
+        ],
+        "rotation_error_deg": 10.347829294485622,
+        "max_axis_rotation_deg": 45.0,
+        "within_limit": true,
+        "within_typical_range": true
+      },
+      "synthetic_flip_recovery_max_abs_error": 0.0
+    }
+  ]
+}

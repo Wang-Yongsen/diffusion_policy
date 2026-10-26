@@ -32,9 +32,11 @@ class TianjiRailRealRunner:
         record_observations=False,
         trace=None,
     ):
-        self.env, self.policy, self.cfg = env, policy, checkpoint_config
+        (self.env, self.policy, self.cfg) = (env, policy, checkpoint_config)
         self.record_observations = bool(record_observations) and trace is None
         self.trace = trace
+        if env.config["inference_mode"] == "sync" and self._n_action_steps() < 2:
+            raise ValueError("Synchronous inference requires checkpoint n_action_steps >= 2")
         self.metadata = metadata
         self.output = Path(output_dir)
         self.output.mkdir(parents=True, exist_ok=True)
@@ -50,6 +52,10 @@ class TianjiRailRealRunner:
         self._started = None
         self._count = 0
         self.error = None
+        self.batch_hooks = None
+        self._batch_stop_reason = None
+        self.observation_source = None
+        self._completed_generation = None
 
     def _begin(self):
         if self._trial is not None:
@@ -112,6 +118,8 @@ class TianjiRailRealRunner:
 
         generation = -1
         anchor_previous = None
+        sync_window = None
+        dataset_pending = False
         sync = self.env.config["inference_mode"] == "sync"
         try:
             while not self._stop.is_set():
@@ -120,37 +128,59 @@ class TianjiRailRealRunner:
                 current = self._generation
                 if generation != current:
                     self.policy.reset()
-                    generation, anchor_previous = current, None
+                    if self.observation_source is not None:
+                        self.observation_source.reset()
+                    (generation, anchor_previous) = (current, None)
+                    sync_window = None
+                    dataset_pending = False
                 completed = None
                 if sync:
-                    completed = self.env.chunk_completed_ns()
-                    if completed is None:
+                    if sync_window is None:
+                        sync_window = self.env.sync_observation_window()
+                    if sync_window is None:
                         self._stop.wait(0.002)
                         continue
-                    # Full alignment competes with the arm loop for the GIL; skip it until a fresh anchor exists.
-                    latest = self.env.latest_anchor_ns()
-                    if latest is None or latest <= completed:
-                        self._stop.wait(0.003)
-                        continue
+                    completed = sync_window["completed_ns"]
+                if self.observation_source is not None and dataset_pending:
+                    with self._inference_lock:
+                        if generation != self._generation or not self._enabled.is_set():
+                            continue
+                        self.observation_source.advance()
+                        dataset_pending = False
+                if self.observation_source is not None and self.observation_source.exhausted:
+                    with self._inference_lock:
+                        if generation == self._generation and self._enabled.is_set():
+                            self._completed_generation = generation
+                            self._enabled.clear()
+                    continue
+                hold = self._before_observation()
+                if hold == "stop":
+                    return
                 started = time.monotonic_ns()
                 try:
-                    obs, anchor, alignment = self.env.get_obs()
+                    (obs, anchor, alignment) = (
+                        self.env.get_obs()
+                        if self.observation_source is None
+                        else self.observation_source.read()
+                    )
                 except ObservationNotReady as error:
-                    # In sync mode the runtime is holding here, so not-ready observations are retried.
                     if self.env.motion and self.env.runtime.active:
                         raise RuntimeError(str(error)) from error
                     self._stop.wait(0.01)
                     continue
                 observed = time.monotonic_ns()
                 if sync:
-                    # The observation must show the robot after the previous chunk, not during it.
-                    if anchor <= completed:
-                        self._stop.wait(0.003)
-                        continue
+                    alignment = {
+                        **alignment,
+                        "source_chunk_id": sync_window["source_chunk_id"],
+                        "source_prediction_id": sync_window["source_prediction_id"],
+                    }
                 elif (
                     anchor_previous is not None
                     and anchor - anchor_previous
-                    < self.env.config["replanning_steps"] * 1e9 / self.env.config["policy_hz"]
+                    < self.env.config["replanning_steps"]
+                    * 1000000000.0
+                    / self.env.config["policy_hz"]
                 ):
                     self._stop.wait(0.003)
                     continue
@@ -168,7 +198,7 @@ class TianjiRailRealRunner:
                     preprocessed = time.monotonic_ns()
                     tensor_obs = {
                         key: torch.from_numpy(value).unsqueeze(0).to(self.policy.device)
-                        for key, value in prepared.items()
+                        for (key, value) in prepared.items()
                     }
                     inputs_ready = time.monotonic_ns()
                     with torch.inference_mode():
@@ -178,9 +208,11 @@ class TianjiRailRealRunner:
                     actions, self.env.config.get("action_space", "eef")
                 )
                 returned = time.monotonic_ns()
-                # A stopped/previous trial cannot publish into a new trial.
+                stability, submit = self._prediction_gate(hold, returned)
                 with self._inference_lock:
-                    if generation != self._generation or not self._enabled.is_set():
+                    if generation != self._generation or (
+                        submit and not self._enabled.is_set()
+                    ):
                         continue
                     prediction_id = None
                     if self.trace is not None:
@@ -198,10 +230,15 @@ class TianjiRailRealRunner:
                             control_input="real",
                             live_capture_started_ns=started,
                             live_capture_returned_ns=observed,
+                            stability=stability,
                         )
-                    observation = {} if self.trace is not None else self._observation_record(obs)
+                    observation = (
+                        {} if self.trace is not None else self._observation_record(obs)
+                    )
                     if prediction_id is not None:
                         observation = {**observation, "prediction_id": prediction_id}
+                    if stability is not None:
+                        observation = {**observation, "stability": stability}
                     self.env.emit(
                         "prediction",
                         anchor_ns=anchor,
@@ -216,12 +253,23 @@ class TianjiRailRealRunner:
                         chunk_completed_ns=completed,
                         **observation,
                     )
+                    if not submit:
+                        self.env.emit(
+                            "prediction_rejected",
+                            reason="post-inference excursion",
+                            stability=stability,
+                        )
+                        if self._batch_stop_reason:
+                            return
+                        continue
                     if prediction_id is None:
                         dropped = self.env.exec_actions(actions, anchor)
                     else:
                         dropped = self.env.exec_actions(
                             actions, anchor, prediction_id=prediction_id
                         )
+                    if self.observation_source is not None:
+                        dataset_pending = True
                     if self.trace is None:
                         self._save_observation_window(obs, anchor)
                     self.env.emit(
@@ -230,6 +278,7 @@ class TianjiRailRealRunner:
                         remaining_steps=len(actions) - dropped,
                     )
                 anchor_previous = anchor
+                sync_window = None
         except Exception as error:
             with self._inference_lock:
                 if generation == self._generation:
@@ -270,12 +319,12 @@ class TianjiRailRealRunner:
         record = {
             "observation_file": f"{name}.npz",
             "prediction_index": index,
-            "input_robot_eef_pose": np.asarray(obs["robot_eef_pose"], dtype=np.float32),
             "input_hand_joint": np.asarray(obs["hand_joint"], dtype=np.float32),
             "measured": self.env.latest_measured(),
         }
-        if "robot_joint" in obs:
-            record["input_robot_joint"] = np.asarray(obs["robot_joint"], dtype=np.float32)
+        for key in ("robot_eef_pose", "robot_joint"):
+            if key in obs:
+                record[f"input_{key}"] = np.asarray(obs[key], dtype=np.float32)
         return record
 
     def _save_observation_window(self, obs, anchor):
@@ -284,7 +333,7 @@ class TianjiRailRealRunner:
         index = self._snapshot_index
         self._snapshot_index += 1
         name = f"obs_{index:02d}" if index < 3 else f"obs_recent_{index % 3:02d}"
-        extra = {"robot_joint": obs["robot_joint"]} if "robot_joint" in obs else {}
+        extra = {key: obs[key] for key in ("robot_eef_pose", "robot_joint") if key in obs}
         self._trial.snapshot(
             name,
             anchor_ns=anchor,
@@ -292,12 +341,12 @@ class TianjiRailRealRunner:
             camera_0=obs["camera_0"],
             camera_1=obs["camera_1"],
             camera_2=obs["camera_2"],
-            robot_eef_pose=obs["robot_eef_pose"],
             hand_joint=obs["hand_joint"],
             **extra,
         )
 
     def run(self):
+        timeout_s = self.env.config["trial_timeout_s"]
         thread = threading.Thread(target=self._infer, name="policy-inference", daemon=True)
         thread.start()
         if not self.env.motion:
@@ -308,12 +357,19 @@ class TianjiRailRealRunner:
             if not self.env.motion
             else "运动模式：每次仍需手动 s 开始。"
         )
+        print(
+            "试验不设自动结束时限，请手动暂停或结束。"
+            if timeout_s is None
+            else f"试验时限：{timeout_s:g} 秒。"
+        )
         if self.trace is not None and self.env.motion:
-            print(
-                "出现明显偏离就可以停，不必凑满试验时限。有人递送导轨或扶机器人时，用 p 记下接管时间。"
-            )
+            print("出现明显偏离、有人递送导轨或扶机器人时，按 p 暂停并记录接管时间。")
         try:
             while not self._stop.wait(0.02):
+                if self._batch_stop_reason:
+                    if self._trial is not None:
+                        self._end("timeout", self._batch_stop_reason)
+                    break
                 if self._trial is not None:
                     problem = self.error or self.env.error or self.env.runtime.fault
                     if not thread.is_alive():
@@ -323,11 +379,23 @@ class TianjiRailRealRunner:
                         print(f"试验中止：{problem}")
                         if not self.env.motion:
                             break
+                    elif self._completed_generation == self._generation:
+                        self._end(
+                            "playback_complete" if self.env.motion else "shadow",
+                            "Dataset observation windows completed",
+                        )
+                        print("数据集观测窗口已执行完成。")
+                        if not self.env.motion:
+                            break
                     elif (
-                        self._started is not None
-                        and time.monotonic() - self._started >= self.env.config["trial_timeout_s"]
+                        timeout_s is not None
+                        and self._started is not None
+                        and (time.monotonic() - self._started >= timeout_s)
                     ):
-                        self._end("timeout" if self.env.motion else "shadow", "Trial time limit")
+                        self._end(
+                            "timeout" if self.env.motion else "shadow", "Trial time limit"
+                        )
+                        print(f"试验结束：达到 {timeout_s:g} 秒时限。")
                         if not self.env.motion:
                             break
                 if sys.stdin.isatty() and select.select([sys.stdin], [], [], 0)[0]:
@@ -339,9 +407,11 @@ class TianjiRailRealRunner:
                             self._begin()
                     elif command in ("p", "y", "n"):
                         self._end(
-                            {"p": "takeover", "y": "success", "n": "failure"}[command]
-                            if self.env.motion
-                            else "shadow",
+                            (
+                                {"p": "takeover", "y": "success", "n": "failure"}[command]
+                                if self.env.motion
+                                else "shadow"
+                            ),
                             f"Operator {command}",
                         )
                     elif command == "q":
@@ -351,3 +421,57 @@ class TianjiRailRealRunner:
             self._end("takeover" if self.env.motion else "shadow", "Runner exit")
             thread.join(timeout=2)
         return summarize_trials(self.output)
+
+    def _batch_blocked(self):
+        hooks = self.batch_hooks
+        if self._batch_stop_reason:
+            return True
+        if hooks is None or self.trace is None:
+            return False
+        if self.trace.decision_count >= hooks.max_decisions:
+            self._batch_stop_reason = "decision cap"
+            self._enabled.clear()
+            return True
+        return False
+
+    def _before_observation(self):
+        if self._batch_blocked():
+            return "stop"
+        hooks = self.batch_hooks
+        if hooks is None or not hooks.stable:
+            return None
+        verdict = hooks.gate.wait_stable(
+            self.env.feedback_since,
+            time.monotonic_ns,
+            self._stop.wait,
+            lambda: self._enabled.is_set()
+            and not self._stop.is_set()
+            and self._batch_stop_reason is None,
+        )
+        public = {key: value for key, value in verdict.items() if key != "snapshot"}
+        self.env.emit("stability_wait", **public)
+        if not verdict["stable"]:
+            self._batch_stop_reason = verdict.get("reason") or "stability wait failed"
+            self._enabled.clear()
+            return "stop"
+        return verdict
+
+    def _prediction_gate(self, verdict, returned_ns):
+        from diffusion_policy.real_world.tianji.batch_factors import latest_snapshot
+
+        if not isinstance(verdict, dict):
+            return None, True
+        after = latest_snapshot(self.env.feedback_since(int(returned_ns) - int(0.25e9)))
+        post = self.batch_hooks.gate.postcheck(verdict.get("snapshot"), after)
+        if post["ok"]:
+            self.batch_hooks.gate.note_accept()
+        elif not self.batch_hooks.gate.note_reject():
+            self._batch_stop_reason = "post-inference excursion"
+            self._enabled.clear()
+        info = {
+            "accepted": bool(post["ok"]),
+            "resamples": self.batch_hooks.gate.resamples,
+            "wait": {key: value for key, value in verdict.items() if key != "snapshot"},
+            "post": post,
+        }
+        return info, bool(post["ok"])

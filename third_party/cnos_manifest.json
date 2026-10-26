@@ -1,0 +1,41 @@
+{
+  "purpose": "Official CNOS SAM-H/DINOv2-L full pipeline; return one final rail mask to FoundationPose",
+  "upstreams": [
+    {
+      "name": "cnos",
+      "url": "https://github.com/nv-nguyen/cnos",
+      "commit": "298d1f3366171464ca271659f0e2f7a6eb8e39b4",
+      "local_changes": false
+    },
+    {
+      "name": "dinov2",
+      "url": "https://github.com/facebookresearch/dinov2",
+      "commit": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+      "local_changes": false
+    }
+  ],
+  "models": [
+    {
+      "path": "third_party/cnos/pretrained/segment-anything/sam_vit_h_4b8939.pth",
+      "sha256": "a7bf3b02f3ebf1267aba913ff637d9a2d5c33d3173bb679e46d9f338c26f262e"
+    },
+    {
+      "path": "third_party/cnos/pretrained/dinov2_vitl14_pretrain.pth",
+      "sha256": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428"
+    }
+  ],
+  "pipeline": {
+    "entrypoint": "src.model.detector.CNOS.test_step",
+    "template_loader": "src.dataloader.bop.BOPTemplate",
+    "rendering": "official Pyrender, 42 views, 0.8 m radius for the 0.48 m rail",
+    "inference_defaults": "configs/model/cnos.yaml",
+    "final_output_instances": 1
+  },
+  "dependencies": [
+    {
+      "name": "bop_toolkit",
+      "url": "https://github.com/thodan/bop_toolkit",
+      "commit": "cea62d651c7e395b2e1962b9749e4e89693c6ac4"
+    }
+  ]
+}

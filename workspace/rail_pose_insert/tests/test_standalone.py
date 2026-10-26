@@ -49,7 +49,9 @@ class StandaloneTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory(prefix="rail-standalone-")
         cls.clone = Path(cls.temporary.name) / "单项目 with spaces"
-        ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".git", "outputs", "build", ".pytest_cache")
+        # Exercise a fresh checkout, independent of locally imported measurements.
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".git", "outputs", "build", ".pytest_cache",
+                                        "calibration_runs", "head_to_left_base.json", "rail_goal.json")
         for name in ("diffusion_policy", "third_party"):
             shutil.copytree(ROOT / name, cls.clone / name, ignore=ignore)
         shutil.copytree(HERE, cls.clone / "workspace/rail_pose_insert", ignore=ignore)

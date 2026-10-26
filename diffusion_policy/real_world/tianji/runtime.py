@@ -23,6 +23,7 @@ from diffusion_policy.third_party.bimanual_teleop.types import (
 )
 
 SIDES = ("left", "right")
+CONTROL_GROUPS = frozenset(("arm", *SIDES))
 INFERENCE_MODES = ("async", "sync")
 # Arm values per side before the two 20-D hands: flange xyz+rotvec, or seven joints.
 ARM_WIDTHS = {"eef": 6, "joint": 7}
@@ -82,8 +83,10 @@ def future_actions(actions, anchor_ns, now_ns, hz=30, margin_s=0.01):
 
 
 def retimed_actions(actions, now_ns, hz=30, margin_s=0.01):
-    """Synchronous chunks start after submission; valid only if the robot held still during inference."""
+    """Schedule a synchronous chunk after submission while retaining every action."""
     actions = _prediction_chunk(actions)
+    if len(actions) < 2:
+        raise ValueError("Synchronous inference requires at least two action steps")
     stamps = (
         int(now_ns)
         + round(margin_s * 1e9)
@@ -137,8 +140,6 @@ def validate_actions(actions, times, reference, config, joint_limits=None):
     hand_delta = np.abs(actions[:, hand:] - previous[:, hand:])
     if np.any(hand_delta > config["max_hand_jump_rad"]):
         raise ValueError("Hand target jumps too far")
-    if np.any(hand_delta[1:] > np.diff(times)[:, None] / 1e9 * config["max_hand_speed_rad_s"]):
-        raise ValueError("Hand target changes too fast")
 
 
 class TianjiPolicyRuntime:
@@ -167,6 +168,10 @@ class TianjiPolicyRuntime:
         # Sync only: engaged and holding the last target until the next prediction is submitted.
         self.sync_waiting = False
         self.chunk_completed_ns = None
+        self._sync_source_chunk_id = None
+        self._sync_step = -1
+        self._sync_advance_ns = None
+        self._sync_accepted = set()
         self.trace = None
         self._prediction_id = None
 
@@ -198,6 +203,8 @@ class TianjiPolicyRuntime:
             self._generation += 1
             self.sync_waiting = self.sync and arm_ready
             self.chunk_completed_ns = self.clock_ns() if self.sync_waiting else None
+            self._sync_source_chunk_id = None
+            self._reset_sync_execution()
 
     def submit(self, actions, anchor_ns, prediction_id=None):
         with self._lock:
@@ -234,6 +241,10 @@ class TianjiPolicyRuntime:
             self.active = True
             self.sync_waiting = False
             self.chunk_completed_ns = None
+            self._sync_source_chunk_id = self._generation if self.sync else None
+            self._reset_sync_execution()
+            if self.sync:
+                self._sync_advance_ns = int(times[0])
             self._prediction_id = None if prediction_id is None else int(prediction_id)
             scheduled = {
                 "generation": self._generation,
@@ -255,6 +266,8 @@ class TianjiPolicyRuntime:
             self.arm_ready = False
             self.sync_waiting = False
             self.chunk_completed_ns = None
+            self._sync_source_chunk_id = None
+            self._reset_sync_execution()
             if fault:
                 self.fault = self.fault or str(reason)
         errors = []
@@ -281,14 +294,20 @@ class TianjiPolicyRuntime:
         return self._last_action
 
     def _complete_chunk(self, now):
-        self._last_action = self._actions[-1].copy()
+        consumed_steps = len(self._actions)
         self._last_nominal_ns = int(self._times[-1])
         self._actions = np.empty((0, self.action_dim))
         self._times = np.empty(0, dtype=np.int64)
         self.active = False
         self.sync_waiting = True
         self.chunk_completed_ns = int(now)
-        self.emit("chunk_complete", generation=self._generation, completed_ns=int(now))
+        self._reset_sync_execution()
+        self.emit(
+            "chunk_complete",
+            generation=self._generation,
+            completed_ns=int(now),
+            consumed_steps=consumed_steps,
+        )
 
     def tick(self, kind, side=None):
         """One control tick, also used by fake-clock tests."""
@@ -300,34 +319,39 @@ class TianjiPolicyRuntime:
             with self._lock:
                 now = self.clock_ns()
                 active, generation = self.active, self._generation
-                if (
-                    active
-                    and self.sync
-                    and now >= self._times[-1] + round(1e9 / self.config["policy_hz"])
-                ):
-                    self._complete_chunk(now)
-                    active = False
                 waiting = self.sync_waiting
                 if active or waiting:
                     problem = self.health()
                     if problem:
                         raise RuntimeError(problem)
-                if active:
+                step = None
+                if active and self.sync:
+                    action, step = self._sync_target(now)
+                    active = self.active
+                elif active:
                     action = self._target(now)
+                    step = int(np.searchsorted(self._times, now, side="right") - 1)
+                else:
+                    action = self._last_action
+                if active:
                     expiry = int(self._times[-1]) + round(1e9 / self.config["policy_hz"])
                     if self.sync:
                         # Sync holds the final step after the chunk, so no step must expire at coverage end.
                         expiry = max(expiry, now + HOLD_TTL_NS)
                 else:
                     # Holding is a distinct mode with the last accepted hand target.
-                    action, expiry = self._last_action, now + HOLD_TTL_NS
-                nominal = self._last_nominal_ns
-                trace_prediction = (
-                    self._prediction_id if self.trace is not None and active else None
+                    expiry = now + HOLD_TTL_NS
+                waiting = self.sync_waiting
+                policy_target = active and (not self.sync or step is not None)
+                nominal = (
+                    int(self._times[step])
+                    if active and self.sync and step is not None
+                    else self._last_nominal_ns
                 )
-                trace_step = None
-                if self.trace is not None and active and len(self._times):
-                    trace_step = int(np.searchsorted(self._times, now, side="right") - 1)
+                trace_prediction = (
+                    self._prediction_id if self.trace is not None and policy_target else None
+                )
+                trace_step = step if policy_target else None
             if action is None:
                 return
             arm_goals, targets = split_action(action, self.action_space)
@@ -343,7 +367,12 @@ class TianjiPolicyRuntime:
                 target_type = JointArmTarget if self.action_space == "joint" else RobotTarget
                 result = self.arm.submit(
                     target_type(
-                        command_id, arm_goals, (), now, expiry, self.arm.driver.profile.profile_id
+                        command_id,
+                        arm_goals,
+                        (),
+                        now,
+                        expiry,
+                        self.arm.driver.profile.profile_id,
                     )
                 )
                 receipts = {"arms": result}
@@ -356,14 +385,7 @@ class TianjiPolicyRuntime:
                 if not hand.health(check_latch=True).ready:
                     hand.disable("Unhealthy Hand2 during policy/hold")
                     raise RuntimeError(f"{side} Hand2 feedback is unhealthy")
-                target = targets[side] if active else hand.last_target
-                if active:
-                    previous = np.asarray(hand.last_target.position_rad)
-                    limit = self.config["max_hand_speed_rad_s"] / self.config["hand_hz"]
-                    bounded = previous + np.clip(
-                        np.asarray(target.position_rad) - previous, -limit, limit
-                    )
-                    target = JointTarget(JOINT_NAMES, tuple(bounded))
+                target = targets[side] if policy_target else hand.last_target
                 with self._lock:
                     if generation != self._generation:
                         return
@@ -380,11 +402,19 @@ class TianjiPolicyRuntime:
                         )
                     )
                 }
+            accepted = all(r.accepted for r in receipts.values())
+            if self.sync and policy_target and accepted:
+                self._accept_sync_action(
+                    generation, step, "arm" if kind == "arm" else side, action
+                )
             self.emit(
                 "submission",
                 kind=kind,
                 side=side,
-                mode="policy" if active else "hold",
+                mode="policy" if policy_target else "hold",
+                generation=generation,
+                step_id=trace_step,
+                accepted=accepted,
                 planned_ns=nominal,
                 started_ns=now,
                 returned_ns=self.clock_ns(),
@@ -411,7 +441,7 @@ class TianjiPolicyRuntime:
                         )
                 except Exception as error:
                     self.trace.mark_invalid(error)
-            if any(not r.accepted for r in receipts.values()):
+            if not accepted:
                 raise RuntimeError(f"Partial/rejected {kind} submission: {receipts}")
 
     def _loop(self, kind, side=None):
@@ -437,3 +467,55 @@ class TianjiPolicyRuntime:
             self._stop.set()
             for thread in self._threads:
                 thread.join(timeout=2)
+
+    def _reset_sync_execution(self):
+        self._sync_step = -1
+        self._sync_advance_ns = None
+        self._sync_accepted.clear()
+
+    def sync_observation_window(self):
+        """Atomic completion context; observation timestamps are chosen by the Env."""
+        with self._lock:
+            if not self.sync_waiting:
+                return None
+            return {
+                "completed_ns": self.chunk_completed_ns,
+                "source_chunk_id": self._sync_source_chunk_id,
+                "source_prediction_id": (
+                    self._prediction_id if self._sync_source_chunk_id is not None else None
+                ),
+            }
+
+    def _sync_target(self, now):
+        """Advance at most one step, after its period and all three accepted submissions.
+
+        Delayed ticks extend execution instead of skipping targets. The Env selects
+        the latest aligned observation after completion. Caller holds _lock.
+        """
+        if self._sync_step < 0:
+            if now < self._sync_advance_ns:
+                return self._last_action, None
+        elif now < self._sync_advance_ns or self._sync_accepted != CONTROL_GROUPS:
+            return self._actions[self._sync_step], self._sync_step
+        elif self._sync_step == len(self._actions) - 1:
+            self._complete_chunk(now)
+            return self._last_action, None
+        self._sync_step += 1
+        self._sync_accepted.clear()
+        self._sync_advance_ns = now + round(1e9 / self.config["policy_hz"])
+        return self._actions[self._sync_step], self._sync_step
+
+    def _accept_sync_action(self, generation, step, group, action):
+        with self._lock:
+            if generation != self._generation or not self.active or step != self._sync_step:
+                return
+            # Only successful submissions update the reference used by jump checks.
+            hand = 2 * ARM_WIDTHS[self.action_space]
+            part = (
+                slice(0, hand)
+                if group == "arm"
+                else slice(hand, hand + 20) if group == "left" else slice(hand + 20, hand + 40)
+            )
+            self._last_action[part] = action[part]
+            self._last_nominal_ns = int(self._times[step])
+            self._sync_accepted.add(group)

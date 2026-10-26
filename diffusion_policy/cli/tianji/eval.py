@@ -11,6 +11,12 @@ from diffusion_policy.real_world.tianji.runtime import INFERENCE_MODES
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, type=Path)
+    parser.add_argument("--dataset", type=Path, help="用 Zarr 观测驱动策略；仅支持同步部署")
+    parser.add_argument("--dataset-mode", choices=("auto", "full", "episode"))
+    parser.add_argument("--dataset-split", choices=("train", "val"))
+    parser.add_argument("--dataset-episode", help="原示教序号或 source_episode 名")
+    parser.add_argument("--dataset-segment", type=int)
+    parser.add_argument("--dataset-max-windows", type=int)
     parser.add_argument(
         "--seed",
         "--batch-seed",
@@ -41,7 +47,9 @@ def build_parser():
     parser.add_argument(
         "--check-only", action="store_true", help="只重载模型与模拟输入推理，不连接设备"
     )
-    parser.add_argument("--motion", action="store_true", help="允许手动接合；必须已填写工作空间")
+    parser.add_argument(
+        "--motion", action="store_true", help="允许手动接合；必须已填写工作空间"
+    )
     parser.add_argument(
         "--record-observations",
         action="store_true",
@@ -52,11 +60,24 @@ def build_parser():
         action="store_true",
         help="把每次决策的原始输入、伺服命令和反馈留在内存，运动结束后再落盘",
     )
-    parser.add_argument("--trace-capacity", type=int, default=48, help="完整记录最多保存多少次决策")
+    parser.add_argument(
+        "--trace-capacity", type=int, default=48, help="完整记录最多保存多少次决策"
+    )
     return parser
 
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.dataset is None and any(
+        value is not None
+        for value in (
+            args.dataset_mode,
+            args.dataset_split,
+            args.dataset_episode,
+            args.dataset_segment,
+            args.dataset_max_windows,
+        )
+    ):
+        parser.error("--dataset-* 参数须与 --dataset 一起使用")
     return run(args)

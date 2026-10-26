@@ -19,37 +19,56 @@ def export(config, result_path, output, camera_serial, kinematics):
 
     result_path, output = Path(result_path).resolve(), Path(output).resolve()
     report = read_json(result_path)
-    if (report.get("schema") != "external_camera_result_v1"
-            or not report.get("passed") or not report.get("quality", {}).get("passed")
+    schema = report.get("schema")
+    if (schema not in ("external_camera_result_v1", "external_eye_to_hand_result_v2")
+            or report.get("passed") is not True or report.get("quality", {}).get("passed") is not True
             or report.get("synthetic", False) or report.get("test_data", False)):
         raise ValueError("Only measured external-camera results that passed validation are accepted")
     if report.get("camera", {}).get("serial") != camera_serial:
         raise ValueError("Result is not from the requested head camera")
-    if report.get("urdf_sha256") != digest(config["urdf"]):
-        raise ValueError("Calibration and experiment URDF differ")
-    side = report.get("side")
-    if side not in ("left", "right") or report.get("reference_frame") != "project_world":
-        raise ValueError("Unknown external-camera reference frame")
     if output.exists():
         raise FileExistsError("Calibration already exists; choose a new output rather than overwriting")
 
-    # Reuse the same official-FK registration and nonzero-pose checks as planning.
-    # RobotModel.base_pose is the first-joint frame, not the SDK arm base.
-    geometry = RobotGeometry(config, kinematics)
-    base = transform(report["T_world_robot_base"])
-    if not np.allclose(base, geometry.robot.base_pose(side), atol=1e-8, rtol=0):
-        raise ValueError("Calibration and experiment project-world conventions differ")
-    camera = transform(report["T_world_camera_opencv"])
-    if not np.allclose(base @ transform(report["T_base_camera_opencv"]), camera,
-                       atol=1e-8, rtol=0):
-        raise ValueError("External result's world/base transforms are inconsistent")
+    if schema == "external_eye_to_hand_result_v2":
+        if (report.get("method") != "eye_to_hand" or report.get("side") != "left"
+                or report.get("reference_frame") != "tianji_left_base"):
+            raise ValueError("Eye-to-hand result must use the SDK left arm's native base")
+        if report.get("camera", {}).get("output_rotation_deg") != 0:
+            raise ValueError("Eye-to-hand result must use the raw, unrotated optical camera frame")
+        if report.get("robot_model_sha256") != kinematics.model.digest:
+            raise ValueError("Calibration and experiment SDK robot models differ")
+        # V2 already uses the native SDK base in metres. Do not apply the
+        # URDF first-joint offset required by legacy project-world results.
+        camera_in_base = transform(report["T_base_camera_opencv"])
+        provenance = {"robot_model_sha256": report["robot_model_sha256"],
+                      "uncertainty": report["quality"].get("uncertainty", {})}
+    else:
+        if report.get("urdf_sha256") != digest(config["urdf"]):
+            raise ValueError("Calibration and experiment URDF differ")
+        side = report.get("side")
+        if side not in ("left", "right") or report.get("reference_frame") != "project_world":
+            raise ValueError("Unknown external-camera reference frame")
+        # Reuse the same official-FK registration and nonzero-pose checks as planning.
+        # RobotModel.base_pose is the first-joint frame, not the SDK arm base.
+        geometry = RobotGeometry(config, kinematics)
+        base = transform(report["T_world_robot_base"])
+        if not np.allclose(base, geometry.robot.base_pose(side), atol=1e-8, rtol=0):
+            raise ValueError("Calibration and experiment project-world conventions differ")
+        camera = transform(report["T_world_camera_opencv"])
+        if not np.allclose(base @ transform(report["T_base_camera_opencv"]), camera,
+                           atol=1e-8, rtol=0):
+            raise ValueError("External result's world/base transforms are inconsistent")
+        camera_in_base = transform(geometry.T_B_W @ camera)
+        provenance = {"urdf_sha256": report["urdf_sha256"],
+                      "wrist_calibration_sha256": report["wrist_calibration_sha256"]}
     payload = {
         "parent_frame": "tianji_left_base", "child_frame": "head_color_optical", "unit": "m",
         "camera_serial": camera_serial,
-        "T_B_C": transform(geometry.T_B_W @ camera).tolist(),
+        "T_B_C": camera_in_base.tolist(),
+        "source_schema": schema,
         "source_result": str(result_path), "source_result_sha256": digest(result_path),
-        "urdf_sha256": report["urdf_sha256"], "sdk_model_sha256": kinematics.model.digest,
-        "wrist_calibration_sha256": report["wrist_calibration_sha256"],
+        "sdk_model_sha256": kinematics.model.digest,
+        **provenance,
         "validation": report["quality"].get("validation", {}),
         "note": "Measured optical camera to SDK left base; validation does not prove absolute accuracy.",
     }

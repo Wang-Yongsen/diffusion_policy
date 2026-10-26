@@ -48,17 +48,29 @@ class TianjiCartesianExecutor:
     def engagement_ref(self) -> SampleRef | None:
         return self._engagement_ref
 
-    def configure(self, profile: ControlProfile) -> None:
-        self.driver.configure(profile)
-        with self._state_lock:
-            self._generation += 1
-            self._reference.clear()
-            self._engagement_poses.clear()
-            self._engagement_ref = None
-            self._servos.clear()
-            self._last_step_ns = None
-            self._applied_poses.clear()
-            self.tracking_status.clear()
+    @staticmethod
+    def _check_cancelled(cancel, operation):
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError(f"Cartesian {operation} was cancelled")
+
+    def configure(self, profile: ControlProfile, *, cancel=None) -> None:
+        self._check_cancelled(cancel, "configuration")
+        try:
+            self.driver.configure(profile, **({"cancel": cancel} if cancel is not None else {}))
+            with self._state_lock:
+                self._generation += 1
+                self._reference.clear()
+                self._engagement_poses.clear()
+                self._engagement_ref = None
+                self._servos.clear()
+                self._last_step_ns = None
+                self._applied_poses.clear()
+                self.tracking_status.clear()
+                self._check_cancelled(cancel, "configuration")
+        except (RuntimeError, ValueError):
+            if cancel is not None and cancel.is_set():
+                self.request_hold("Cartesian configuration was cancelled")
+            raise
 
     def _resolve_reference(self, sample: Sample[TianjiFrame]) -> tuple[dict, dict, dict]:
         reference, poses, servos = {}, {}, {}
@@ -76,7 +88,8 @@ class TianjiCartesianExecutor:
             servos[side] = servo
         return reference, poses, servos
 
-    def engage(self) -> None:
+    def engage(self, *, cancel=None) -> None:
+        self._check_cancelled(cancel, "engagement")
         generation = self._generation
         profile = self.driver.profile
         sample = self.driver.get_latest()
@@ -85,13 +98,16 @@ class TianjiCartesianExecutor:
         if not self.driver.health().ready:
             raise RuntimeError("feedback is not ready for engagement")
         self._resolve_reference(sample)
-        self.driver.engage()
+        self._check_cancelled(cancel, "engagement")
         try:
+            self.driver.engage(**({"cancel": cancel} if cancel is not None else {}))
+            self._check_cancelled(cancel, "engagement")
             sample = self.driver.engagement_sample
             if sample is None:
                 raise RuntimeError("driver did not retain its engagement sample")
             reference, poses, servos = self._resolve_reference(sample)
             with self._state_lock:
+                self._check_cancelled(cancel, "engagement")
                 if self._generation != generation or not self.driver.engaged:
                     raise RuntimeError("Cartesian engagement was cancelled")
                 self._generation += 1

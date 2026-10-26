@@ -12,6 +12,7 @@ import zarr
 from scipy.spatial.transform import Rotation, Slerp
 
 CAMERAS = ("camera_0", "camera_1", "camera_2")
+OBSERVATION_MODES = ("demonstration", "dataset-images-live-state", "live-images-dataset-state")
 POLICY_HZ = 30
 # Approach stays under the strict deployment speeds so a loose trial config
 # cannot turn the move-to-start into a fast Cartesian slide.
@@ -49,7 +50,9 @@ def pose_delta(current, goal):
         )
         current_r = Rotation.from_rotvec(current[6 * index + 3 : 6 * index + 6])
         goal_r = Rotation.from_rotvec(goal[6 * index + 3 : 6 * index + 6])
-        result[f"{side}_rotation_deg"] = float(np.rad2deg((goal_r * current_r.inv()).magnitude()))
+        result[f"{side}_rotation_deg"] = float(
+            np.rad2deg((goal_r * current_r.inv()).magnitude())
+        )
     result["hand_max_deg"] = float(np.rad2deg(np.max(np.abs(goal[12:] - current[12:]))))
     return result
 
@@ -64,8 +67,8 @@ def approach_within_limits(current, goal):
 def approach_actions(start, goal, *, hz=POLICY_HZ, speeds=None):
     """30 Hz path from the current target to ``goal``. The current target itself is not included.
 
-    Position and finger joints are linear. Flange rotation uses slerp. Each step
-    stays a little under the given speed caps so a later exact speed check passes.
+    Arm position and finger joints are linear. Flange rotation uses slerp. Arm
+    speed caps determine the path length; finger speed does not add extra steps.
     """
     start, goal = _action_row(start), _action_row(goal)
     speeds = APPROACH_SPEEDS if speeds is None else speeds
@@ -86,9 +89,6 @@ def approach_actions(start, goal, *, hz=POLICY_HZ, speeds=None):
             _steps(distance, speeds["max_position_speed_m_s"], hz),
             _steps(angle, speeds["max_rotation_speed_rad_s"], hz),
         )
-    steps = max(
-        steps, _steps(np.max(np.abs(goal[12:] - start[12:])), speeds["max_hand_speed_rad_s"], hz)
-    )
     path = np.empty((steps, 52), dtype=np.float64)
     start_r = [Rotation.from_rotvec(start[6 * index + 3 : 6 * index + 6]) for index in range(2)]
     goal_r = [Rotation.from_rotvec(goal[6 * index + 3 : 6 * index + 6]) for index in range(2)]
@@ -129,7 +129,9 @@ def list_segments(path):
     for index, (low, high) in enumerate(zip(starts, segment_ends)):
         episode_index = int(np.searchsorted(episode_ends, int(high) - 1, side="left"))
         source = (
-            described[index].get("source_episode") if described else f"episode_{episode_index:06d}"
+            described[index].get("source_episode")
+            if described
+            else f"episode_{episode_index:06d}"
         )
         result.append(
             {
@@ -173,7 +175,9 @@ class RecordedSegment:
         self.robot_eef_pose = np.asarray(
             data["robot_eef_pose"][self.start : self.end], dtype=np.float32
         )
-        self.hand_joint = np.asarray(data["hand_joint"][self.start : self.end], dtype=np.float32)
+        self.hand_joint = np.asarray(
+            data["hand_joint"][self.start : self.end], dtype=np.float32
+        )
         self._images = {key: data[key] for key in CAMERAS}
         if "timestamp" in data and self.n_frames > 1:
             dt = np.diff(np.asarray(data["timestamp"][self.start : self.end], dtype=np.float64))
@@ -231,7 +235,9 @@ def _action_row(value):
 
 def _steps(distance, speed, hz):
     if distance < 0 or not np.isfinite(distance) or not np.isfinite(speed) or speed <= 0:
-        raise ValueError("Approach distance and speed must be finite and nonnegative / positive")
+        raise ValueError(
+            "Approach distance and speed must be finite and nonnegative / positive"
+        )
     return int(np.ceil(distance / (speed / hz * 0.98) - 1e-12))
 
 
@@ -244,3 +250,45 @@ def _check_ends(ends, count, name):
         or int(ends[-1]) != count
     ):
         raise ValueError(f"Invalid {name}")
+
+
+def observation_sources(mode):
+    """State means measured-joint FK (12-D EEF) and both hands (40-D)."""
+    if mode not in OBSERVATION_MODES:
+        raise ValueError(f"Unknown observation mode: {mode}")
+    return {
+        "images": "live" if mode == "live-images-dataset-state" else "dataset",
+        "robot_eef_pose": "live" if mode == "dataset-images-live-state" else "dataset",
+        "hand_joint": "live" if mode == "dataset-images-live-state" else "dataset",
+    }
+
+
+def compose_observation(demo, live, mode):
+    """Copy the selected raw fields before the common checkpoint preprocessing.
+
+    Dataset and live windows have independent clocks. Never substitute dataset
+    values when a required live window is missing.
+    """
+    sources = observation_sources(mode)
+    if mode != "demonstration" and live is None:
+        raise ValueError("Mixed observations require a valid live observation window")
+    states = live if sources["robot_eef_pose"] == "live" else demo
+    images = live if sources["images"] == "live" else demo
+    obs = {key: np.array(images[key], copy=True) for key in CAMERAS}
+    obs.update(
+        {key: np.array(states[key], copy=True) for key in ("robot_eef_pose", "hand_joint")}
+    )
+    n_obs = len(obs["robot_eef_pose"])
+    for key, width in (("robot_eef_pose", 12), ("hand_joint", 40)):
+        if obs[key].shape != (n_obs, width) or n_obs < 1 or not np.isfinite(obs[key]).all():
+            raise ValueError(f"Invalid {key} observation window")
+    for key in CAMERAS:
+        pixels = obs[key]
+        if (
+            pixels.dtype != np.uint8
+            or pixels.ndim != 4
+            or pixels.shape[0] != n_obs
+            or pixels.shape[-1] != 3
+        ):
+            raise ValueError(f"{key} must be a matching uint8 NHWC observation window")
+    return obs

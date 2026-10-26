@@ -1,0 +1,106 @@
+{
+  "side": "right",
+  "unit": "rad",
+  "validation": "Recorded right-hand B2 final 1 s median, with +0.05 rad on joints 3 and 4 of fingers 2-5, plus thumb joint3 +0.05 rad and joint4 +0.10 rad. Physical grip with these adjustments remains unverified.",
+  "joint_order": [
+    "finger1_joint1",
+    "finger1_joint2",
+    "finger1_joint3",
+    "finger1_joint4",
+    "finger2_joint1",
+    "finger2_joint2",
+    "finger2_joint3",
+    "finger2_joint4",
+    "finger3_joint1",
+    "finger3_joint2",
+    "finger3_joint3",
+    "finger3_joint4",
+    "finger4_joint1",
+    "finger4_joint2",
+    "finger4_joint3",
+    "finger4_joint4",
+    "finger5_joint1",
+    "finger5_joint2",
+    "finger5_joint3",
+    "finger5_joint4"
+  ],
+  "open_position_rad": [
+    0.15,
+    -0.25,
+    0.05,
+    0.05,
+    0.1,
+    0,
+    0.05,
+    0.05,
+    0.1,
+    0,
+    0.05,
+    0.05,
+    0.1,
+    0,
+    0.05,
+    0.05,
+    0.1,
+    0,
+    0.05,
+    0.05
+  ],
+  "grasp_position_rad": [
+    -0.027516,
+    -0.771024,
+    1.0174,
+    0.114119,
+    1.2488,
+    -0.36283,
+    1.471619,
+    0.709857,
+    1.511928,
+    -0.166262,
+    1.220901,
+    0.837353,
+    1.43255,
+    -0.093082,
+    1.398127,
+    0.770197,
+    1.199383,
+    0.131301,
+    1.621854,
+    0.553568
+  ],
+  "adjustment": {
+    "reason": "Slightly tighten the recorded grasp after user feedback",
+    "joint_names": [
+      "finger2_joint3", "finger2_joint4",
+      "finger3_joint3", "finger3_joint4",
+      "finger4_joint3", "finger4_joint4",
+      "finger5_joint3", "finger5_joint4"
+    ],
+    "offset_rad": 0.05
+  },
+  "thumb_adjustment": {
+    "reason": "Curl the thumb slightly further toward the rail while retaining the recorded opposition direction",
+    "joint_offset_rad": {
+      "finger1_joint3": 0.05,
+      "finger1_joint4": 0.10
+    }
+  },
+  "source": {
+    "episode": "/home/yuchen/project/bimanual-teleop/recordings/record_grasp_pose/episode_000001",
+    "stream": "hands/right",
+    "phase_marker_index": 2,
+    "phase_marker_time_ns": 69019570118054,
+    "phase_marker_relative_s": 27.067926948,
+    "window_start_ns": 69029732159569,
+    "window_end_ns": 69030732159569,
+    "window_relative_s": [
+      37.229968463,
+      38.229968463
+    ],
+    "selection": "per-joint median of measured right-hand joint positions in the final 1 s after B2",
+    "sample_count": 200,
+    "max_joint_range_rad": 0.0054280757904052734,
+    "episode_sha256": "51fd813b618545df05775f9259772082e10eb9eb27c7bf02a64cf46a26107ec5",
+    "stream_sha256": "ac4a4741a20e281931e4fcae17c53f539a4533c0e42eaac613b6b010e0605714"
+  }
+}

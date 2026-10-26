@@ -33,9 +33,10 @@ class JointPath:
 
 class Planner:
     """Solve a joint target and interpolate directly, checking joint limits only."""
-    def __init__(self, config, kinematics):
+    def __init__(self, config, kinematics, side="left"):
         self.config, self.kinematics = config, kinematics
-        arm = kinematics.model.arm("left")
+        self.side = side
+        arm = kinematics.model.arm(side)
         self.lower = np.asarray(arm.lower_rad) + .001
         self.upper = np.asarray(arm.upper_rad) - .001
 
@@ -58,13 +59,15 @@ class Planner:
         initial = vector(initial, 7)
         if not self.valid(initial):
             raise ValueError("Initial joint state exceeds joint or coupled wrist limits")
-        for seed in [initial, (initial + (self.lower + self.upper)/2)/2,
-                     np.radians([30, -60, -34, -52, 30, 12, 4])]:
+        nominal = np.radians([30, -60, -34, -52, 30, 12, 4])
+        if self.side == "right":
+            nominal *= [-1, 1, -1, 1, -1, 1, -1]
+        for seed in [initial, (initial + (self.lower + self.upper)/2)/2, nominal]:
             try:
-                candidate = np.asarray(self.kinematics.ik("left", pose(target_flange), tuple(seed)))
+                candidate = np.asarray(self.kinematics.ik(self.side, pose(target_flange, self.side), tuple(seed)))
                 if not self.valid(candidate):
                     continue
-                error = difference(matrix(self.kinematics.fk("left", tuple(candidate))), target_flange)
+                error = difference(matrix(self.kinematics.fk(self.side, tuple(candidate))), target_flange)
                 if error[0] < .0001 and error[1] < .0002:
                     points = [initial, candidate]
                     self.validate_path(points)

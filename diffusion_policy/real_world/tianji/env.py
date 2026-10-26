@@ -41,6 +41,11 @@ from .joint_executor import TianjiJointExecutor, model_joint_limits
 from .observation import (
     ObservationNotReady,
     align_observation,
+    align_latest_observation,
+    _fixed_queries,
+    _check_fixed_coverage,
+    CAMERA_KEYS,
+    STATE_KEYS,
 )
 from .runtime import (
     SIDES,
@@ -52,7 +57,9 @@ from .runtime import (
 
 class TianjiRailEnv:
     def __init__(self, config, n_obs_steps, *, motion=False):
-        self.config, self.n_obs_steps, self.motion = config, n_obs_steps, motion
+        if config["inference_mode"] == "sync" and n_obs_steps not in (1, 2):
+            raise ValueError("Synchronous inference requires checkpoint n_obs_steps in (1, 2)")
+        (self.config, self.n_obs_steps, self.motion) = (config, n_obs_steps, motion)
         self.recorder = None
         self.trace = None
         self.record_observations = False
@@ -63,6 +70,9 @@ class TianjiRailEnv:
         self._collector = None
         self._arm_sequences = {}
         self._shadow_chunk_end_ns = 0
+        self._shadow_source_chunk_id = None
+        self._shadow_chunk_id = 0
+        self._shadow_prediction_id = None
         self.histories = {
             key: deque()
             for key in (
@@ -91,7 +101,9 @@ class TianjiRailEnv:
         joint_limits = None
         if self.action_space == "joint":
             self.arm = TianjiJointExecutor(self.driver)
-            joint_limits = {side: model_joint_limits(self.kinematics.model, side) for side in SIDES}
+            joint_limits = {
+                side: model_joint_limits(self.kinematics.model, side) for side in SIDES
+            }
         else:
             self.arm = TianjiCartesianExecutor(self.driver, self.kinematics)
         self.session = WujiSdkSession(user_name=sdk_user_name(hand_config))
@@ -107,7 +119,12 @@ class TianjiRailEnv:
         camera_config = replace(load_camera_config(config["camera_config"]), main_depth=False)
         self.cameras = CameraRig(camera_config)
         self.runtime = TianjiPolicyRuntime(
-            self.arm, self.hands, config, self.health_problem, self.emit, joint_limits=joint_limits
+            self.arm,
+            self.hands,
+            config,
+            self.health_problem,
+            self.emit,
+            joint_limits=joint_limits,
         )
 
     def enable_trace(self, trace):
@@ -182,7 +199,9 @@ class TianjiRailEnv:
                                 pose.position_m,
                                 Rotation.from_quat(pose.orientation_xyzw).as_rotvec(),
                             ]
-                            self._append(f"arms/{side}", sample.header.received_monotonic_ns, value)
+                            self._append(
+                                f"arms/{side}", sample.header.received_monotonic_ns, value
+                            )
                             self._append(
                                 f"arm_joints/{side}", sample.header.received_monotonic_ns, q
                             )
@@ -196,7 +215,9 @@ class TianjiRailEnv:
                                 or not np.isfinite(q).all()
                             ):
                                 raise RuntimeError(f"{side}: invalid measured hand joints")
-                            self._append(f"hands/{side}", sample.header.received_monotonic_ns, q)
+                            self._append(
+                                f"hands/{side}", sample.header.received_monotonic_ns, q
+                            )
                     self._log_measured()
                 if self.runtime.active or self.runtime.sync_waiting:
                     problem = self.health_problem()
@@ -252,7 +273,7 @@ class TianjiRailEnv:
             self.emit("measured", **measured)
 
     def latest_anchor_ns(self):
-        """The anchor get_obs would align to, without health checks or image copies."""
+        """Latest main-camera anchor covered by states, without image copies."""
         with self._lock:
             if any(not history for history in self.histories.values()):
                 return None
@@ -262,11 +283,15 @@ class TianjiRailEnv:
                 for side in SIDES
             )
             return next(
-                (stamp for stamp, _ in reversed(self.histories["camera_0"]) if stamp <= state_end),
+                (
+                    stamp
+                    for stamp, _ in reversed(self.histories["camera_0"])
+                    if stamp <= state_end
+                ),
                 None,
             )
 
-    def get_obs(self):
+    def get_obs(self, *, query_ns=None):
         if self.error:
             raise RuntimeError(self.error)
         problem = self.health_problem()
@@ -274,8 +299,16 @@ class TianjiRailEnv:
             raise ObservationNotReady(problem)
         with self._lock:
             histories = {key: list(history) for key, history in self.histories.items()}
+        if query_ns is None and self.config["inference_mode"] == "sync":
+            return align_latest_observation(
+                histories, self.n_obs_steps, self.config, now_ns=time.monotonic_ns()
+            )
         return align_observation(
-            histories, self.n_obs_steps, self.config, now_ns=time.monotonic_ns()
+            histories,
+            self.n_obs_steps,
+            self.config,
+            now_ns=time.monotonic_ns(),
+            query_ns=query_ns,
         )
 
     def engage(self):
@@ -325,7 +358,13 @@ class TianjiRailEnv:
                 self.config["policy_hz"],
                 self.config["submit_margin_s"],
             )
-            self._shadow_chunk_end_ns = int(times[-1]) + round(1e9 / self.config["policy_hz"])
+            with self._lock:
+                self._shadow_chunk_end_ns = int(times[-1]) + round(
+                    1e9 / self.config["policy_hz"]
+                )
+                self._shadow_chunk_id += 1
+                self._shadow_source_chunk_id = self._shadow_chunk_id
+                self._shadow_prediction_id = prediction_id
         else:
             selected, times, dropped = future_actions(
                 actions,
@@ -334,7 +373,17 @@ class TianjiRailEnv:
                 self.config["policy_hz"],
                 self.config["submit_margin_s"],
             )
-        self.emit("shadow_schedule", times_ns=times, actions=selected, dropped_steps=dropped)
+        self.emit(
+            "shadow_schedule",
+            times_ns=times,
+            actions=selected,
+            dropped_steps=dropped,
+            **(
+                {"generation": self._shadow_chunk_id, "prediction_id": prediction_id}
+                if self.config["inference_mode"] == "sync"
+                else {}
+            ),
+        )
         return dropped
 
     def chunk_completed_ns(self):
@@ -342,11 +391,16 @@ class TianjiRailEnv:
         if self.motion:
             return self.runtime.chunk_completed_ns
         return (
-            self._shadow_chunk_end_ns if time.monotonic_ns() >= self._shadow_chunk_end_ns else None
+            self._shadow_chunk_end_ns
+            if time.monotonic_ns() >= self._shadow_chunk_end_ns
+            else None
         )
 
     def pause(self, reason="Operator pause"):
-        self._shadow_chunk_end_ns = time.monotonic_ns()
+        with self._lock:
+            self._shadow_chunk_end_ns = time.monotonic_ns()
+            self._shadow_source_chunk_id = None
+            self._shadow_prediction_id = None
         self.runtime.pause(reason)
 
     def close(self):
@@ -361,3 +415,52 @@ class TianjiRailEnv:
                     device.close()
                 except Exception as error:
                     self.error = self.error or str(error)
+
+    def observation_ready(self, query_ns):
+        """Check fixed-window coverage without image copies; lost history is fatal."""
+        if self.error:
+            raise RuntimeError(self.error)
+        problem = self.health_problem()
+        if problem:
+            raise RuntimeError(problem)
+        queries = _fixed_queries(query_ns, self.n_obs_steps)
+        with self._lock:
+            try:
+                _check_fixed_coverage(self.histories, queries, self.config)
+            except ObservationNotReady:
+                return False
+        return True
+
+    def sync_observation_window(self):
+        """Completion context for choosing a fresh observation, including bootstrap."""
+        if self.motion:
+            return self.runtime.sync_observation_window()
+        with self._lock:
+            if time.monotonic_ns() < self._shadow_chunk_end_ns:
+                return None
+            return {
+                "completed_ns": self._shadow_chunk_end_ns,
+                "source_chunk_id": self._shadow_source_chunk_id,
+                "source_prediction_id": (
+                    self._shadow_prediction_id
+                    if self._shadow_source_chunk_id is not None
+                    else None
+                ),
+            }
+
+    def feedback_since(self, since_ns):
+        """Copy actual flange poses and hand joints at or after ``since_ns``. No new FK."""
+        since_ns = int(since_ns)
+        with self._lock:
+
+            def take(key):
+                return [
+                    (int(stamp), np.asarray(value, dtype=np.float64).copy())
+                    for stamp, value in self.histories[key]
+                    if stamp >= since_ns
+                ]
+
+            return {
+                "arms": {side: take(f"arms/{side}") for side in SIDES},
+                "hands": {side: take(f"hands/{side}") for side in SIDES},
+            }

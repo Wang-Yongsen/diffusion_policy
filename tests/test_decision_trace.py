@@ -73,6 +73,78 @@ class Pose:
 
 
 class DecisionTraceTests(unittest.TestCase):
+    def test_file_backed_images_export_through_the_existing_trace_format(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "images"
+            item = SessionTrace(
+                decision_capacity=2,
+                feedback_capacity=4,
+                command_capacity=4,
+                hand_capacity=4,
+                image_directory=cache,
+            )
+            item.allocate_decisions(observation(), 8, capture_real=True)
+            self.assertIsInstance(item.images["camera_0"], np.memmap)
+            self.assertIsInstance(item.real_images["camera_2"], np.memmap)
+            item.begin_trial()
+            for index in range(2):
+                item.store_decision(
+                    obs=observation(index + 1),
+                    alignment={},
+                    anchor_ns=index,
+                    actions=np.full((8 if index == 0 else 4, 52), index),
+                    started_ns=1,
+                    observed_ns=2,
+                    preprocessed_ns=3,
+                    inputs_ready_ns=4,
+                    returned_ns=5,
+                    real_obs=observation(index + 20),
+                )
+            meta = item.flush(Path(directory) / "trial")
+            item.close_image_storage(remove=True)
+            self.assertFalse(cache.exists())
+            self.assertTrue(meta["valid"])
+            self.assertEqual(meta["image_storage"], "memmap")
+            with np.load(Path(directory) / "trial/trace_decisions.npz") as saved:
+                np.testing.assert_array_equal(saved["camera_0"][1], observation(2)["camera_0"])
+                np.testing.assert_array_equal(
+                    saved["real_camera_2"][1], observation(21)["camera_2"]
+                )
+                self.assertEqual(saved["action_rows"].tolist(), [8, 4])
+
+    def test_failed_export_preserves_file_backed_observations(self):
+        from diffusion_policy.real_world.tianji.replay import _flush_replay_trace
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "images"
+            item = SessionTrace(
+                decision_capacity=1,
+                feedback_capacity=2,
+                command_capacity=2,
+                hand_capacity=2,
+                image_directory=cache,
+            )
+            item.allocate_decisions(observation(), 2, capture_real=True)
+            item.store_decision(
+                obs=observation(7),
+                alignment={},
+                anchor_ns=10,
+                actions=np.zeros((2, 52)),
+                started_ns=1,
+                observed_ns=2,
+                preprocessed_ns=3,
+                inputs_ready_ns=4,
+                returned_ns=5,
+            )
+            with patch.object(item, "_write_arrays", side_effect=OSError("disk full")):
+                exported = _flush_replay_trace(item, directory)
+            self.assertFalse(exported)
+            item.close_image_storage(remove=exported)
+            np.testing.assert_array_equal(
+                np.load(cache / "camera_0.npy")[0], observation(7)["camera_0"]
+            )
+            self.assertIn("disk full", (Path(directory) / "trace_flush_error.txt").read_text())
+
     def test_missing_joint_is_not_zero(self):
         self.assertIsNone(finite_joints((None, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), 7))
         self.assertFalse(snapshot_arm_feedback(None)["present"])
@@ -122,7 +194,9 @@ class DecisionTraceTests(unittest.TestCase):
         item.append_sample = lambda sample: (_ for _ in ()).throw(RuntimeError("boom"))
         self.assertTrue(item.sink.try_publish(object()))
         self.assertTrue(
-            item.sink.try_event(SimpleNamespace(kind="other", observed_monotonic_ns=1, details={}))
+            item.sink.try_event(
+                SimpleNamespace(kind="other", observed_monotonic_ns=1, details={})
+            )
         )
         self.assertFalse(item.valid)
         self.assertIn("boom", item.invalid_reason)
@@ -188,7 +262,8 @@ class DecisionTraceTests(unittest.TestCase):
         joints = (None,) + (0.2,) * 19
         item.append_sample(
             SimpleNamespace(
-                payload=SimpleNamespace(position_rad=joints, joint_names=("j",) * 20), header=header
+                payload=SimpleNamespace(position_rad=joints, joint_names=("j",) * 20),
+                header=header,
             )
         )
         with tempfile.TemporaryDirectory() as root:
@@ -206,7 +281,10 @@ class DecisionTraceTests(unittest.TestCase):
             command_id="cmd-1",
             payload=SimpleNamespace(
                 targets={"left": (0.2,) * 7, "right": (0.3,) * 7},
-                cartesian_targets={"left": Pose((0.1, 0.0, 0.0)), "right": Pose((0.0, 0.1, 0.0))},
+                cartesian_targets={
+                    "left": Pose((0.1, 0.0, 0.0)),
+                    "right": Pose((0.0, 0.1, 0.0)),
+                },
                 requested_cartesian_targets={
                     "left": Pose((0.11, 0.0, 0.0)),
                     "right": Pose((0.0, 0.11, 0.0)),
@@ -239,7 +317,9 @@ class DecisionTraceTests(unittest.TestCase):
         self.assertAlmostEqual(follow[0], 20.0)
         self.assertTrue(np.isnan(follow[1]))
         stamps = np.array([10, 20, 30, 40])
-        points = np.array([[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [1.0, 0.0, 0.0], [1.01, 0.0, 0.0]])
+        points = np.array(
+            [[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [1.0, 0.0, 0.0], [1.01, 0.0, 0.0]]
+        )
         motion = inference_motion_mm(stamps, points, np.array([10, 30]), np.array([20, 40]))
         np.testing.assert_allclose(motion, [10.0, 10.0])
         self.assertIsNone(
@@ -293,7 +373,8 @@ class DecisionTraceTests(unittest.TestCase):
             payload = write_provenance(root, files, PROJECT_ROOT)
             self.assertEqual(len(payload["commit"]), 40)
             self.assertEqual(
-                payload["files"]["decision_trace"]["sha256"], file_sha256(files["decision_trace"])
+                payload["files"]["decision_trace"]["sha256"],
+                file_sha256(files["decision_trace"]),
             )
             self.assertTrue((Path(root) / "source.diff").is_file())
 
@@ -319,7 +400,9 @@ class DecisionTraceTests(unittest.TestCase):
                 env.close()
             env.driver.start.assert_called_once_with(item.sink)
             self.assertTrue(
-                all(call.args == (item.sink,) for call in env.hands["left"].start.call_args_list)
+                all(
+                    call.args == (item.sink,) for call in env.hands["left"].start.call_args_list
+                )
             )
             self.assertGreaterEqual(env.hands["left"].start.call_count, 1)
 

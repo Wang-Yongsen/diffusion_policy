@@ -1,0 +1,21 @@
+%% 节点、组件边界与PNG由同一份规格生成；PNG布局单独指定。
+flowchart TD
+  subgraph assembly["一次任务的执行顺序"]
+    receive["1  固定接料位<br/>右手预成形，人递入导轨中部<br/>抓持区避开两孔及夹具"]
+    close["2  缓慢闭合<br/>人承托，确认允许闭合<br/>关节／电流／诊断联合检查"]
+    verify["3  交接并验证抓稳<br/>人卸载放开，再做小幅试动<br/>确认不滑移，持续保持"]
+    pose["4  获取位姿与抓持关系<br/>FoundationPose + 同时刻 FK<br/>每次接料后重新计算"]
+    preinsert["5  移动到轴顶上方<br/>由导轨目标换算法兰目标<br/>两孔入口均高于轴顶并留净空"]
+    align["6  视觉对齐两个孔<br/>平移／偏航／倾斜小步修正<br/>两孔均满足条件后才下插"]
+    insert["7  低速柔顺下插<br/>轴向推进，接触力与进度检查<br/>一侧先碰或卡滞：停止并卸载"]
+    seat["8  确认两轴进入并落座<br/>综合深度、接触与稳定性<br/>首版由操作员确认安装完成"]
+    release["9  松手、撤离与复核<br/>夹具支撑后缓慢张手<br/>确认导轨保持安装状态"]
+  end
+  receive --> close
+  close --> verify
+  verify --> pose
+  pose --> preinsert
+  preinsert --> align
+  align --> insert
+  insert --> seat
+  seat --> release

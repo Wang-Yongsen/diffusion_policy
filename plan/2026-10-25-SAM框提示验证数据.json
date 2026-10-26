@@ -1,0 +1,387 @@
+{
+  "box": {
+    "valid": true,
+    "detector": "sam_prompt",
+    "pipeline": "official_SamPredictor",
+    "output_instances": 1,
+    "prompt_box_xyxy": [
+      230.0,
+      185.0,
+      545.0,
+      270.0
+    ],
+    "point_coords": [],
+    "point_labels": [],
+    "roi_xyxy": [
+      230,
+      185,
+      545,
+      270
+    ],
+    "detected_in_roi": true,
+    "quality_score_type": "SAM_predicted_IoU",
+    "quality_score": 0.9549390077590942,
+    "bbox_xyxy": [
+      253,
+      213,
+      527,
+      249
+    ],
+    "mask_pixels": 5208,
+    "reason": "segmented",
+    "inference_seconds": 1.247611323997262,
+    "left_exposed_pixels": 3317,
+    "right_exposed_pixels": 1171,
+    "hand_box_pixels": 0,
+    "peak_reserved_mib": 6262.0
+  },
+  "box_points": {
+    "valid": true,
+    "detector": "sam_prompt",
+    "pipeline": "official_SamPredictor",
+    "output_instances": 1,
+    "prompt_box_xyxy": [
+      230.0,
+      185.0,
+      545.0,
+      270.0
+    ],
+    "point_coords": [
+      [
+        290.0,
+        230.0
+      ],
+      [
+        495.0,
+        220.0
+      ],
+      [
+        420.0,
+        220.0
+      ]
+    ],
+    "point_labels": [
+      1,
+      1,
+      0
+    ],
+    "roi_xyxy": [
+      230,
+      185,
+      545,
+      270
+    ],
+    "detected_in_roi": true,
+    "quality_score_type": "SAM_predicted_IoU",
+    "quality_score": 0.9684135317802429,
+    "bbox_xyxy": [
+      254,
+      213,
+      527,
+      248
+    ],
+    "mask_pixels": 5154,
+    "reason": "segmented",
+    "inference_seconds": 2.386817598991911,
+    "left_exposed_pixels": 3292,
+    "right_exposed_pixels": 1164,
+    "hand_box_pixels": 0,
+    "peak_reserved_mib": 6262.0
+  },
+  "wide_box": {
+    "valid": true,
+    "detector": "sam_prompt",
+    "pipeline": "official_SamPredictor",
+    "output_instances": 1,
+    "prompt_box_xyxy": [
+      156.0,
+      27.0,
+      640.0,
+      416.0
+    ],
+    "point_coords": [],
+    "point_labels": [],
+    "roi_xyxy": [
+      156,
+      27,
+      640,
+      416
+    ],
+    "detected_in_roi": true,
+    "quality_score_type": "SAM_predicted_IoU",
+    "quality_score": 0.9754785895347595,
+    "bbox_xyxy": [
+      211,
+      30,
+      640,
+      408
+    ],
+    "mask_pixels": 32751,
+    "reason": "segmented",
+    "inference_seconds": 1.1756111269933172,
+    "left_exposed_pixels": 15,
+    "right_exposed_pixels": 155,
+    "hand_box_pixels": 10,
+    "peak_reserved_mib": 6262.0
+  },
+  "wide_box_points": {
+    "valid": true,
+    "detector": "sam_prompt",
+    "pipeline": "official_SamPredictor",
+    "output_instances": 1,
+    "prompt_box_xyxy": [
+      156.0,
+      27.0,
+      640.0,
+      416.0
+    ],
+    "point_coords": [
+      [
+        290.0,
+        230.0
+      ],
+      [
+        495.0,
+        220.0
+      ],
+      [
+        420.0,
+        220.0
+      ]
+    ],
+    "point_labels": [
+      1,
+      1,
+      0
+    ],
+    "roi_xyxy": [
+      156,
+      27,
+      640,
+      416
+    ],
+    "detected_in_roi": true,
+    "quality_score_type": "SAM_predicted_IoU",
+    "quality_score": 0.7940618991851807,
+    "bbox_xyxy": [
+      220,
+      105,
+      640,
+      395
+    ],
+    "mask_pixels": 11898,
+    "reason": "segmented",
+    "inference_seconds": 1.5316026469954522,
+    "left_exposed_pixels": 3259,
+    "right_exposed_pixels": 1181,
+    "hand_box_pixels": 0,
+    "peak_reserved_mib": 6262.0
+  },
+  "worker_integration": [
+    {
+      "offline_recorded_rgbd": true,
+      "cycle": 1,
+      "elapsed_s": 22.42396062100306,
+      "segmentation": {
+        "valid": true,
+        "detector": "sam_prompt",
+        "pipeline": "official_SamPredictor",
+        "output_instances": 1,
+        "prompt_box_xyxy": [
+          230.0,
+          185.0,
+          545.0,
+          270.0
+        ],
+        "point_coords": [],
+        "point_labels": [],
+        "roi_xyxy": [
+          230,
+          185,
+          545,
+          270
+        ],
+        "detected_in_roi": true,
+        "quality_score_type": "SAM_predicted_IoU",
+        "quality_score": 0.9549390077590942,
+        "bbox_xyxy": [
+          253,
+          213,
+          527,
+          249
+        ],
+        "mask_pixels": 5208,
+        "reason": "segmented",
+        "mask_snapshot": "cycle_1/mask.png"
+      },
+      "pose": {
+        "frame_id": "00001512",
+        "timestamp_ns": 73695616798362,
+        "frame": "T_C_CAD: original CAD coordinates to OpenCV camera coordinates",
+        "valid": true,
+        "mode": "track",
+        "T_C_CAD": [
+          [
+            -0.07677211612462997,
+            -0.9968492388725281,
+            0.019936975091695786,
+            0.3473692834377289
+          ],
+          [
+            -0.6512150168418884,
+            0.03499140962958336,
+            -0.7580862045288086,
+            -0.06291261315345764
+          ],
+          [
+            0.7550000548362732,
+            -0.07118310779333115,
+            -0.6518495678901672,
+            0.7308508157730103
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation_m": [
+          0.3473692834377289,
+          -0.06291261315345764,
+          0.7308508157730103
+        ],
+        "quaternion_xyzw": [
+          -0.6205010176634191,
+          0.6640054787037434,
+          -0.31222231011298124,
+          -0.276753392748467
+        ],
+        "processing_s": 0.038894572004210204,
+        "pose_batch_size": 8,
+        "candidate_count": 252,
+        "torch_peak_allocated_mib": 176.0849609375,
+        "torch_peak_reserved_mib": 306.0,
+        "pose_snapshot": "cycle_1/pose.png",
+        "camera_serial": "405622076394",
+        "mesh_sha256": "6ed2b18a9c21ac8f958113fec38d25be3d26ab7b7af4046eb5ec861651ca5c36",
+        "replay_only": false,
+        "generation": "cycle_1",
+        "context_epoch": 1,
+        "timestamp_source": "sdk_global_timestamp_mapped_to_host_monotonic",
+        "output_monotonic_ns": 73695680494414
+      }
+    },
+    {
+      "offline_recorded_rgbd": true,
+      "cycle": 2,
+      "elapsed_s": 28.205627810995793,
+      "segmentation": {
+        "valid": true,
+        "detector": "sam_prompt",
+        "pipeline": "official_SamPredictor",
+        "output_instances": 1,
+        "prompt_box_xyxy": [
+          230.0,
+          185.0,
+          545.0,
+          270.0
+        ],
+        "point_coords": [
+          [
+            290.0,
+            230.0
+          ],
+          [
+            495.0,
+            220.0
+          ],
+          [
+            420.0,
+            220.0
+          ]
+        ],
+        "point_labels": [
+          1,
+          1,
+          0
+        ],
+        "roi_xyxy": [
+          230,
+          185,
+          545,
+          270
+        ],
+        "detected_in_roi": true,
+        "quality_score_type": "SAM_predicted_IoU",
+        "quality_score": 0.9684144854545593,
+        "bbox_xyxy": [
+          254,
+          213,
+          527,
+          248
+        ],
+        "mask_pixels": 5154,
+        "reason": "segmented",
+        "mask_snapshot": "cycle_2/mask.png"
+      },
+      "pose": {
+        "frame_id": "00001512",
+        "timestamp_ns": 73723812966839,
+        "frame": "T_C_CAD: original CAD coordinates to OpenCV camera coordinates",
+        "valid": true,
+        "mode": "track",
+        "T_C_CAD": [
+          [
+            -0.08552662283182144,
+            -0.9963077902793884,
+            0.007488902658224106,
+            0.3493785262107849
+          ],
+          [
+            -0.5500828623771667,
+            0.040951408445835114,
+            -0.834105372428894,
+            -0.06603940576314926
+          ],
+          [
+            0.8307190537452698,
+            -0.07545769214630127,
+            -0.5515542030334473,
+            0.7352943420410156
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation_m": [
+          0.3493785262107849,
+          -0.06603940576314926,
+          0.7352943420410156
+        ],
+        "quaternion_xyzw": [
+          -0.5968827823070628,
+          0.6476944168777669,
+          -0.3510772621713265,
+          -0.31775405979630644
+        ],
+        "processing_s": 0.04507685999851674,
+        "pose_batch_size": 8,
+        "candidate_count": 252,
+        "torch_peak_allocated_mib": 176.0849609375,
+        "torch_peak_reserved_mib": 306.0,
+        "pose_snapshot": "cycle_2/pose.png",
+        "camera_serial": "405622076394",
+        "mesh_sha256": "6ed2b18a9c21ac8f958113fec38d25be3d26ab7b7af4046eb5ec861651ca5c36",
+        "replay_only": false,
+        "generation": "cycle_2",
+        "context_epoch": 2,
+        "timestamp_source": "sdk_global_timestamp_mapped_to_host_monotonic",
+        "output_monotonic_ns": 73723885106320
+      }
+    }
+  ]
+}

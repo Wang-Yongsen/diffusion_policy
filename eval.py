@@ -16,6 +16,7 @@ import torch
 import dill
 import wandb
 import json
+from omegaconf import OmegaConf
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.common.policy_evaluation import evaluation_context
 
@@ -39,6 +40,10 @@ def main(checkpoint, output_dir, device, dataset_path, seed, clip_sample):
     cfg = payload['cfg']
     if dataset_path is not None:
         cfg.task.dataset.dataset_path = str(pathlib.Path(dataset_path).resolve())
+        # Resolved checkpoints contain a separate dataset config in the runner.
+        runner_dataset = cfg.task.env_runner.get('dataset')
+        if OmegaConf.is_dict(runner_dataset) and 'dataset_path' in runner_dataset:
+            runner_dataset.dataset_path = cfg.task.dataset.dataset_path
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg, output_dir=output_dir)
     workspace: BaseWorkspace

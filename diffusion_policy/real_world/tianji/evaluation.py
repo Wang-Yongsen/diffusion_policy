@@ -19,6 +19,7 @@ from diffusion_policy.env_runner.tianji_rail_real_runner import (
 )
 from diffusion_policy.real_world.tianji.config import load_deployment_config
 from diffusion_policy.real_world.tianji.env import TianjiRailEnv
+from diffusion_policy.real_world.dataset_observation_source import DatasetObservationSource
 from diffusion_policy.real_world.tianji.inference import PolicyInferenceProcess
 from diffusion_policy.real_world.tianji.trace import (
     SessionTrace,
@@ -40,6 +41,11 @@ def run(args):
     config = load_deployment_config(args.config, args.overrides)
     device = args.device or config["device"]
     config["inference_mode"] = args.inference_mode or config["inference_mode"]
+    dataset_path = getattr(args, "dataset", None)
+    if dataset_path is not None and config["inference_mode"] != "sync":
+        raise ValueError("数据集观测部署须使用 --inference-mode sync")
+    if dataset_path is not None and args.trace:
+        raise ValueError("数据集观测部署暂不支持 --trace；可使用 --record-observations")
     output = args.output or Path(config["output_dir"]) / time.strftime("%Y%m%d-%H%M%S")
     if output.exists():
         raise FileExistsError(f"Evaluation output already exists: {output}")
@@ -57,15 +63,44 @@ def run(args):
     config["action_space"] = checkpoint_action_space(cfg)
     if config["action_space"] == "joint" and args.trace:
         raise ValueError("--trace 的决策记录只支持末端版 checkpoint")
-    if config["inference_mode"] == "async" and config["replanning_steps"] >= policy.n_action_steps:
+    if config["inference_mode"] == "sync" and (
+        policy.n_obs_steps not in (1, 2) or policy.n_action_steps < 2
+    ):
+        raise ValueError(
+            "Synchronous inference requires checkpoint n_obs_steps in (1, 2) and n_action_steps >= 2"
+        )
+    if (
+        config["inference_mode"] == "async"
+        and config["replanning_steps"] >= policy.n_action_steps
+    ):
         raise ValueError("replanning_steps must be smaller than checkpoint n_action_steps")
     if (
         config["history_s"]
         <= (policy.n_obs_steps - 1) / config["policy_hz"] + config["max_state_gap_s"]
     ):
         raise ValueError("history_s cannot cover checkpoint observation window")
-    preflight = check_inference(policy, cfg)
+    observation_source = None
+    if dataset_path is not None:
+        observation_source = DatasetObservationSource(
+            cfg,
+            dataset_path,
+            split=args.dataset_split,
+            mode=args.dataset_mode or "auto",
+            episode=args.dataset_episode,
+            segment=args.dataset_segment,
+            max_windows=args.dataset_max_windows,
+            n_obs_steps=int(policy.n_obs_steps),
+            n_action_steps=int(policy.n_action_steps),
+        )
+    preflight = (
+        check_inference(policy, cfg)
+        if observation_source is None
+        else check_inference(policy, cfg, observation=observation_source.read()[0])
+    )
     metadata = _session_metadata(args, cfg, config, device, state_key, preflight)
+    metadata["observation_source"] = (
+        {"kind": "real"} if observation_source is None else observation_source.metadata
+    )
     print(f"checkpoint sha256 {metadata['checkpoint_sha256']}")
     if args.trace and args.trace_capacity < 1:
         raise ValueError("--trace-capacity 须为正整数")
@@ -81,10 +116,16 @@ def run(args):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     inference = PolicyInferenceProcess(args.checkpoint, device, capture_rng=args.trace)
-    return _run_session(args, cfg, config, metadata, inference, output, n_obs_steps)
+    if observation_source is not None:
+        metadata["dataset_preflight"] = preflight
+    return _run_session(
+        args, cfg, config, metadata, inference, output, n_obs_steps, observation_source
+    )
 
 
-def _run_session(args, cfg, config, metadata, inference, output, n_obs_steps):
+def _run_session(
+    args, cfg, config, metadata, inference, output, n_obs_steps, observation_source=None
+):
     metadata["preflight"] = inference.preflight
     metadata["inference_backend"] = "spawn_process"
     env = None
@@ -104,6 +145,7 @@ def _run_session(args, cfg, config, metadata, inference, output, n_obs_steps):
             record_observations=args.record_observations,
             trace=trace,
         )
+        runner.observation_source = observation_source
         if trace is not None:
             files = runtime_files()
             files["eval_tianji_rail"] = Path(__file__).resolve()
@@ -196,7 +238,9 @@ def _source_revision():
         ["git", "-C", str(PROJECT_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
     )
     changes = subprocess.run(
-        ["git", "-C", str(PROJECT_ROOT), "status", "--porcelain"], capture_output=True, text=True
+        ["git", "-C", str(PROJECT_ROOT), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
     )
     return {
         "commit": revision.stdout.strip(),

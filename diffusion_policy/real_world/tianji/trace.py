@@ -6,6 +6,7 @@ compress, write NPZ, or run extra forward kinematics. A full buffer marks the
 trace invalid and drops the new item. Missing joints stay missing.
 """
 
+import shutil
 import json
 import subprocess
 import threading
@@ -178,6 +179,7 @@ class SessionTrace:
         command_capacity=20000,
         hand_capacity=20000,
         status_capacity=1024,
+        image_directory=None,
     ):
         for name, value in (
             ("decision_capacity", decision_capacity),
@@ -189,6 +191,8 @@ class SessionTrace:
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         self.decision_capacity = decision_capacity
+        self.image_directory = None if image_directory is None else Path(image_directory)
+        self._image_files = []
         self.sink = TraceSink(self)
         self._lock = threading.RLock()
         self._tls = threading.local()
@@ -283,9 +287,10 @@ class SessionTrace:
             if other.shape != image.shape or other.dtype != np.uint8:
                 raise ValueError(f"{camera} does not match camera_0")
         capacity = self.decision_capacity
-        self.images = {
-            camera: np.empty((capacity, n_obs, height, width, 3), np.uint8) for camera in CAMERAS
-        }
+        if self.image_directory is not None:
+            self.image_directory.mkdir(parents=True, exist_ok=False)
+        shape = (capacity, n_obs, height, width, 3)
+        self.images = {camera: self._allocate_images(camera, shape) for camera in CAMERAS}
         self.eef = np.empty((capacity, n_obs, 12), np.float32)
         self.hands = np.empty((capacity, n_obs, 40), np.float32)
         self.actions = np.full((capacity, n_action, 52), np.nan, np.float64)
@@ -301,7 +306,9 @@ class SessionTrace:
         self.meta = [None] * capacity
         self.capture_real = bool(capture_real)
         if self.capture_real:
-            self.real_images = {camera: np.empty_like(self.images[camera]) for camera in CAMERAS}
+            self.real_images = {
+                camera: self._allocate_images(f"real_{camera}", shape) for camera in CAMERAS
+            }
             self.real_eef = np.empty_like(self.eef)
             self.real_hands = np.empty_like(self.hands)
             self.real_anchor_ns = np.full(capacity, -1, np.int64)
@@ -309,12 +316,14 @@ class SessionTrace:
         else:
             self.real_images = self.real_eef = self.real_hands = self.real_anchor_ns = None
             self.real_present = np.zeros(capacity, bool)
-        # Allocation is done while disengaged. Touch pages now, not in a formal decision.
-        for buffer in self.images.values():
-            buffer.fill(0)
-        if self.real_images is not None:
-            for buffer in self.real_images.values():
+        # Anonymous arrays are prefaulted before engagement. Mapped files start
+        # zeroed without loading the entire image recording into resident memory.
+        if self.image_directory is None:
+            for buffer in self.images.values():
                 buffer.fill(0)
+            if self.real_images is not None:
+                for buffer in self.real_images.values():
+                    buffer.fill(0)
         self.n_obs = n_obs
         self.n_action = n_action
         self.decisions_ready = True
@@ -350,6 +359,7 @@ class SessionTrace:
         control_input="real",
         live_capture_started_ns=None,
         live_capture_returned_ns=None,
+        stability=None,
     ):
         """Copy one decision into the next free slot. Overflow does not raise."""
         if not self.decisions_ready:
@@ -404,6 +414,7 @@ class SessionTrace:
             "rng_cuda_present": rng_cuda is not None,
             "live_capture_started_ns": live_capture_started_ns,
             "live_capture_returned_ns": live_capture_returned_ns,
+            "stability": _plain(stability),
         }
         self._rng_cpu[index] = rng_cpu
         self._rng_cuda[index] = rng_cuda
@@ -433,7 +444,9 @@ class SessionTrace:
             row = self.hfb_count
             self.hfb_count += 1
         self.hfb_ns[row] = int(header.received_monotonic_ns)
-        self.hfb_seq[row] = -1 if header.source_sequence is None else int(header.source_sequence)
+        self.hfb_seq[row] = (
+            -1 if header.source_sequence is None else int(header.source_sequence)
+        )
         self.hfb_side[row] = side
         if joints is not None:
             self.hfb_q[row] = joints
@@ -464,7 +477,12 @@ class SessionTrace:
                 )
                 requested = getattr(payload, "requested_cartesian_targets", {}) or {}
                 _write_pose(
-                    self.req_xyz, self.req_quat, self.req_present, row, index, requested.get(side)
+                    self.req_xyz,
+                    self.req_quat,
+                    self.req_present,
+                    row,
+                    index,
+                    requested.get(side),
                 )
 
     def record_receipt(self, event):
@@ -628,6 +646,7 @@ class SessionTrace:
                 recording_end_ns=recording_end_ns,
                 status_summary=status_summary,
                 critical_status_dropped=dropped["status"],
+                image_storage="memory" if self.image_directory is None else "memmap",
             )
             # A frozen drop during the copy is part of this trial.
             with self._lock:
@@ -791,7 +810,9 @@ class SessionTrace:
         self._allocate_feedback(feedback)
         self._allocate_commands(commands)
         self._allocate_hands(hands)
-        self.fb_count = self.cmd_count = self.hand_count = self.hfb_count = self.decision_count = 0
+        self.fb_count = self.cmd_count = self.hand_count = self.hfb_count = (
+            self.decision_count
+        ) = 0
         self._cmd_index.clear()
         self._status.clear()
         self.status_summary.clear()
@@ -911,6 +932,30 @@ class SessionTrace:
             feedback_source_sequence=self.hfb_seq[:seen],
             feedback_present=self.hfb_present[:seen],
         )
+
+    def _allocate_images(self, name, shape):
+        if self.image_directory is None:
+            return np.empty(shape, np.uint8)
+        path = self.image_directory / f"{name}.npy"
+        result = np.lib.format.open_memmap(path, mode="w+", dtype=np.uint8, shape=shape)
+        self._image_files.append(path)
+        return result
+
+    def close_image_storage(self, *, remove=False):
+        """Call after the trial and device threads stop. Preserve cache on export failure."""
+        if self.image_directory is None:
+            return
+        images = list(getattr(self, "images", {}).values())
+        images.extend((getattr(self, "real_images", None) or {}).values())
+        for buffer in images:
+            if not buffer._mmap.closed:
+                buffer.flush()
+                buffer._mmap.close()
+        if remove:
+            for path in self._image_files:
+                path.unlink(missing_ok=True)
+            if self.image_directory.exists():
+                self.image_directory.rmdir()
 
 
 def _write_pose(xyz, quat, present, row, index, pose):

@@ -2,6 +2,8 @@
 
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +28,8 @@ def write_dataset(path):
     meta.array("episode_ends", np.asarray([25, 45], np.int64))
     meta.array("segment_ends", np.asarray([20, 25, 45], np.int64))
     meta.attrs["segments"] = [
-        {"source_episode": name} for name in ("episode_000000", "episode_000000", "episode_000001")
+        {"source_episode": name}
+        for name in ("episode_000000", "episode_000000", "episode_000001")
     ]
     frames = 45
     data.array("timestamp", np.arange(frames, dtype=np.float64) / 30)
@@ -95,7 +98,6 @@ class RecordedEpisodeTest(unittest.TestCase):
             "max_hand_jump_rad": 0.3,
             "max_position_speed_m_s": 0.15,
             "max_rotation_speed_rad_s": 0.8,
-            "max_hand_speed_rad_s": 2.0,
             "workspace": {
                 side: {"min": [-2.0, -2.0, -2.0], "max": [2.0, 2.0, 2.0]}
                 for side in ("left", "right")
@@ -104,7 +106,7 @@ class RecordedEpisodeTest(unittest.TestCase):
         reference = start
         for offset in range(0, len(path), 8):
             chunk = path[offset : offset + 8]
-            times = 1_000_000_000 + np.arange(len(chunk)) * round(1e9 / 30)
+            times = 1000000000 + np.arange(len(chunk)) * round(1000000000.0 / 30)
             validate_actions(chunk, times, reference, config)
             reference = chunk[-1]
         delta = pose_delta(start, goal)
@@ -115,6 +117,27 @@ class RecordedEpisodeTest(unittest.TestCase):
         start, goal = np.zeros(52), np.zeros(52)
         goal[0] = 1.2
         self.assertFalse(approach_within_limits(start, goal))
+
+    def test_approach_singleton_tail_holds_final_target_for_two_steps(self):
+        from diffusion_policy.real_world.tianji.replay import _submit_path
+
+        submitted = []
+        env = SimpleNamespace(
+            exec_actions=lambda actions, *args, **kwargs: submitted.append(actions),
+            chunk_completed_ns=lambda: 1,
+            runtime=SimpleNamespace(active=False),
+        )
+        path = np.arange(9 * 52).reshape(9, 52)
+        self.assertIsNone(_submit_path(env, path, 8))
+        self.assertEqual([len(chunk) for chunk in submitted], [8, 2])
+        np.testing.assert_array_equal(submitted[-1], np.repeat(path[-1:], 2, axis=0))
+
+    def test_hand_only_approach_does_not_insert_speed_limited_steps(self):
+        (start, goal) = (np.zeros(52), np.zeros(52))
+        goal[12] = 0.9
+        path = approach_actions(start, goal)
+        self.assertEqual(len(path), 1)
+        np.testing.assert_allclose(path[0], goal)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from diffusion_policy.common.paths import PROJECT_ROOT
 from diffusion_policy.real_world.tianji.replay import run
+from diffusion_policy.real_world.tianji.recorded_episode import OBSERVATION_MODES
 
 
 def build_parser():
@@ -32,6 +33,15 @@ def build_parser():
     )
     parser.add_argument("--device", help="覆盖配置中的模型设备，例如 cpu 或 cuda:0")
     parser.add_argument("--max-windows", type=int, help="只回放前若干个执行块")
+    parser.add_argument(
+        "--observation-mode",
+        choices=OBSERVATION_MODES,
+        default="demonstration",
+        help="选择示教或现场的图像和状态；混合模式需要 --motion",
+    )
+    parser.add_argument(
+        "--full-segment", action="store_true", help="执行完整片段，记录容量自动计算"
+    )
     parser.add_argument("--output", type=Path, help="新建会话目录，不覆盖已有目录")
     parser.add_argument(
         "--motion", action="store_true", help="把预测动作下发到真机；须在交互终端手动输入 s"
@@ -41,7 +51,9 @@ def build_parser():
         action="store_true",
         help="运动时保存示范观测，并另存当时的真实观测；真实观测不参与控制",
     )
-    parser.add_argument("--trace-capacity", type=int, default=48, help="完整记录最多保存多少次决策")
+    parser.add_argument(
+        "--trace-capacity", type=int, default=48, help="完整记录最多保存多少次决策"
+    )
     return parser
 
 

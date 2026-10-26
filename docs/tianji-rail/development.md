@@ -36,7 +36,8 @@
 | `scripts/probe_tianji_obs_gap.py` | `python -m diffusion_policy.cli.tianji probe` |
 
 根目录旧入口是薄转发；`--batch-seed` 仍可作为 `--seed` 的别名。
-固定日期的补充诊断和最终批次入口已移除。
+固定日期的补充诊断已移除。本地混合观测实验仍使用 `scripts/run_tianji_final_batch_slot.py`；
+其可选稳定采样工具位于 `real_world/tianji/batch_factors.py`，常规评估不启用。
 训练命令、Hydra 配置名、checkpoint 的模型与工作区类路径保持可用。
 末端版已改为14维四元数观测、58维6D旋转动作，旧52维末端版 checkpoint 须重新训练。
 旧部署模块导入仅保留兼容转发，新代码使用上表中的包路径。
@@ -56,6 +57,9 @@ conda run -n tianji-rail-diffusion-policy python -m unittest discover \
 
 使用测试内的模拟设备。上游 `tests/` 还含相机、机器人和仿真环境脚本，勿直接全量执行。
 回归覆盖数据来源划分、预处理、增强、EMA、恢复、调度、暂停和进程退出。
+合并后的数据集部署、固定观测、逐步同步执行、混合观测和试验生命周期测试分别见
+`test_tianji_dataset_deploy.py`、`test_tianji_fixed_observation.py`、`test_tianji_sync_consumption.py`、
+`test_tianji_mixed_observation.py`、`test_tianji_trial_lifecycle.py`。
 
 ## 代码约定
 

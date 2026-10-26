@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "unit": "m",
+  "frame": "T_C_CAD",
+  "camera_serial": "405622076394",
+  "mesh_sha256": "6ed2b18a9c21ac8f958113fec38d25be3d26ab7b7af4046eb5ec861651ca5c36",
+  "T_C_O_goal": [
+    [
+      -0.002238725554574411,
+      -0.9999968464830326,
+      0.0011380386118447494,
+      0.2931235134601593
+    ],
+    [
+      -0.6777681810607862,
+      0.0006805673628789977,
+      -0.7352753426911706,
+      0.1374767671028773
+    ],
+    [
+      0.7352722494759645,
+      -0.0024174060592581093,
+      -0.6777675673108738,
+      0.6973594625790914
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "test_data": false,
+  "observation": {
+    "camera_serial": "405622076394",
+    "unit": "m",
+    "frame": "T_C_CAD",
+    "mesh_sha256": "6ed2b18a9c21ac8f958113fec38d25be3d26ab7b7af4046eb5ec861651ca5c36",
+    "test_data": false,
+    "records": [
+      {
+        "frame_id": "17",
+        "timestamp_ns": 44781601840878,
+        "frame": "T_C_CAD: original CAD coordinates to OpenCV camera coordinates",
+        "valid": true,
+        "mode": "register",
+        "T_C_CAD": [
+          [
+            -0.0018469584174454212,
+            -0.9999982118606567,
+            -0.00024162365298252553,
+            0.2933468222618103
+          ],
+          [
+            -0.6808026432991028,
+            0.0014343985822051764,
+            -0.7324653267860413,
+            0.13749751448631287
+          ],
+          [
+            0.7324643731117249,
+            -0.0011883346596732736,
+            -0.6808042526245117,
+            0.6966582536697388
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation_m": [
+          0.2933468222618103,
+          0.13749751448631287,
+          0.6966582536697388
+        ],
+        "quaternion_xyzw": [
+          -0.6475961095079608,
+          0.6488616182201473,
+          -0.28266955930458615,
+          -0.2823044448701363
+        ],
+        "processing_s": 8.306408386211842,
+        "pose_batch_size": 8,
+        "candidate_count": 252,
+        "torch_peak_allocated_mib": 349.328125,
+        "torch_peak_reserved_mib": 586.0,
+        "timestamp_source": "sdk_global_timestamp_mapped_to_host_monotonic"
+      },
+      {
+        "frame_id": "44",
+        "timestamp_ns": 44782501171182,
+        "frame": "T_C_CAD: original CAD coordinates to OpenCV camera coordinates",
+        "valid": true,
+        "mode": "register",
+        "T_C_CAD": [
+          [
+            -0.0021725662518292665,
+            -0.9999938607215881,
+            0.0027244919911026955,
+            0.2931300699710846
+          ],
+          [
+            -0.6722988486289978,
+            -0.0005562722217291594,
+            -0.7402796745300293,
+            0.13765911757946014
+          ],
+          [
+            0.7402766942977905,
+            -0.0034400098957121372,
+            -0.6722934246063232,
+            0.6974972486495972
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation_m": [
+          0.2931300699710846,
+          0.13765911757946014,
+          0.6974972486495972
+        ],
+        "quaternion_xyzw": [
+          -0.6462733943633077,
+          0.6468983325427196,
+          -0.2874175304130589,
+          -0.28503405112869595
+        ],
+        "processing_s": 5.983659270219505,
+        "pose_batch_size": 8,
+        "candidate_count": 252,
+        "torch_peak_allocated_mib": 349.3466796875,
+        "torch_peak_reserved_mib": 486.0,
+        "timestamp_source": "sdk_global_timestamp_mapped_to_host_monotonic"
+      },
+      {
+        "frame_id": "72",
+        "timestamp_ns": 44783434312686,
+        "frame": "T_C_CAD: original CAD coordinates to OpenCV camera coordinates",
+        "valid": true,
+        "mode": "register",
+        "T_C_CAD": [
+          [
+            -0.0027056781109422445,
+            -0.9999958276748657,
+            0.0009314361377619207,
+            0.292893648147583
+          ],
+          [
+            -0.6801749467849731,
+            0.001157568534836173,
+            -0.7330490350723267,
+            0.1372736692428589
+          ],
+          [
+            0.7330448627471924,
+            -0.0026169996708631516,
+            -0.680175244808197,
+            0.6979228854179382
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation_m": [
+          0.292893648147583,
+          0.1372736692428589,
+          0.6979228854179382
+        ],
+        "quaternion_xyzw": [
+          -0.6473623353055533,
+          0.6488525465486942,
+          -0.2834488084239414,
+          -0.2820800465613664
+        ],
+        "processing_s": 5.34969593025744,
+        "pose_batch_size": 8,
+        "candidate_count": 252,
+        "torch_peak_allocated_mib": 349.3466796875,
+        "torch_peak_reserved_mib": 486.0,
+        "timestamp_source": "sdk_global_timestamp_mapped_to_host_monotonic"
+      }
+    ],
+    "replay_only": true,
+    "source_directory": "/home/yuchen/project/diffusion_policy/workspace/rail_pose_insert/outputs/teach_target_20261024_152106",
+    "usage": "static_target_reference_only"
+  },
+  "calibration_sha256_at_teach": "19d2608461e31898d5f6b35c24b77c30ad89eb8085055ea0539bb5c4ab7e5bc7",
+  "created_at": "2026-10-24T15:25:55.058238+08:00",
+  "teaching_method": "live_rgbd_capture_with_remote_foundationpose_registration",
+  "source_capture": "/home/yuchen/project/diffusion_policy/workspace/rail_pose_insert/outputs/teach_target_20261024_152106",
+  "source_scene_sha256": "06867c91780f533cf39f80d5b8b9c14e8e352eb8cb214e43ea0ce1f42c22688f",
+  "source_registrations_sha256": "3d055403f07f8db51bbf4ace9daa2b69a89dca1f05ceb22f65e221df75207d25",
+  "estimation_host": "raids-pro6000",
+  "quality": {
+    "independent_registrations": 3,
+    "max_translation_deviation_m": 0.0007362005225275056,
+    "max_rotation_deviation_rad": 0.007585015023476401,
+    "tracked_mean_difference_m": 0.003212295965327934,
+    "tracked_mean_difference_rad": 0.010822610604679638,
+    "scope": "Stationary repeatability and cross-method consistency; not absolute placement accuracy."
+  }
+}

@@ -70,6 +70,51 @@ class CalibrationExportTests(unittest.TestCase):
                 export(self.config, self.source, self.output, "unit-test-only", SimpleNamespace())
             self.assertFalse(self.output.exists())
 
+    def eye_to_hand_report(self, kinematics):
+        camera = np.eye(4)
+        camera[:3, :3] = Rotation.from_euler("xyz", [.3, -.2, .6]).as_matrix()
+        camera[:3, 3] = [.19, -.225, .013]
+        return {
+            "schema": "external_eye_to_hand_result_v2", "method": "eye_to_hand",
+            "passed": True, "synthetic": False, "quality": {"passed": True},
+            "side": "left", "reference_frame": "tianji_left_base",
+            "camera": {"serial": "unit-test-only", "output_rotation_deg": 0},
+            "robot_model_sha256": kinematics.model.digest,
+            "T_base_camera_opencv": camera.tolist(),
+        }
+
+    def test_eye_to_hand_keeps_native_sdk_transform_without_urdf_offset(self):
+        kinematics = TianjiKinematics()
+        report = self.eye_to_hand_report(kinematics)
+        write_json(self.source, report)
+        with patch("rail_preinsert.geometry.RobotGeometry", side_effect=AssertionError("Already in SDK base")):
+            payload = export(self.config, self.source, self.output, "unit-test-only", kinematics)
+        _, X = load_calibration(self.output)
+        np.testing.assert_array_equal(X, report["T_base_camera_opencv"])
+        self.assertEqual(payload["source_result_sha256"], digest(self.source))
+        self.assertEqual(payload["sdk_model_sha256"], kinematics.model.digest)
+        with self.assertRaises(FileExistsError):
+            export(self.config, self.source, self.output, "unit-test-only", kinematics)
+
+    def test_eye_to_hand_rejects_wrong_base_model_camera_or_unmeasured_results(self):
+        kinematics = TianjiKinematics()
+        for update in (
+                {"robot_model_sha256": "different-model"},
+                {"side": "right", "reference_frame": "tianji_right_base"},
+                {"reference_frame": "project_world"}, {"method": "other"},
+                {"camera": {"serial": "unit-test-only", "output_rotation_deg": 180}},
+                {"camera": {"serial": "other-camera", "output_rotation_deg": 0}},
+                {"passed": False}, {"quality": {"passed": False}},
+                {"synthetic": True}, {"test_data": True},
+                {"T_base_camera_opencv": np.zeros((4, 4)).tolist()}):
+            with self.subTest(update=update):
+                report = self.eye_to_hand_report(kinematics)
+                report.update(update)
+                write_json(self.source, report)
+                with self.assertRaises(ValueError):
+                    export(self.config, self.source, self.output, "unit-test-only", kinematics)
+                self.assertFalse(self.output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

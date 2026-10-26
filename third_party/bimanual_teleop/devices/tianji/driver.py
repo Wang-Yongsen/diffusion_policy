@@ -642,47 +642,68 @@ class TianjiDriver:
             with self._lock:
                 self._clearing_errors = False
 
-    def configure(self, profile: ControlProfile) -> None:
+    def _check_cancelled(self, cancel, operation: str) -> None:
+        if self._closing.is_set() or self._stop.is_set() or cancel is not None and cancel.is_set():
+            raise RuntimeError(f"Tianji {operation} cancelled")
+
+    def configure(self, profile: ControlProfile, *, cancel=None) -> None:
+        self._check_cancelled(cancel, "configuration")
         parsed = MotionProfile.from_control_profile(profile, self.model_path)
         with self._lock:
             self._connected()
             if self._clearing_errors or self._moving_side is not None:
                 raise RuntimeError("Tianji maintenance is in progress")
-            profiles = [parsed.arms.get(side) for side in SIDES]
-            token = self._next_token(f"configure-{uuid.uuid4().hex}")
-            self._event("tianji.configure_requested", {"sdk_token": token, "profile": asdict(profile)})
-            submitted = self._invoke("configure", self._mask(parsed.active_arms), profiles, token=token)
-            expected = {}
-            for side, arm in parsed.arms.items():
-                expected[side] = {
-                    "cart_k": (*arm.stiffness, arm.nullspace_stiffness),
-                    "cart_d": (*arm.damping, arm.nullspace_damping),
-                    "tool_pose": (0.,) * 6, "tool_dynamics": arm.tool_dyn10,
-                    "impedance_rotation": (0.,) * 7,
-                }
-            deadline = time.monotonic_ns() + self.engagement_timeout_ns
-            while True:
-                self._connected()
-                self._require_feedback(parsed.active_arms)
-                packet = self._packet
-                confirmed = all(self._advanced.get(side, 0) > submitted for side in parsed.active_arms)
-                for side, channels in expected.items():
-                    index, arm = SIDES.index(side), parsed.arms[side]
-                    confirmed &= (packet.velocity_ratio[index] == arm.velocity_ratio
-                                  and packet.acceleration_ratio[index] == arm.acceleration_ratio
-                                  and packet.force_type[index] == 1)
-                    for name, values in channels.items():
-                        width = len(values)
-                        confirmed &= tuple(getattr(packet, name)[index*width:(index+1)*width]) == tuple(
-                            ct.c_float(value).value for value in values)
-                if confirmed:
-                    break
-                if time.monotonic_ns() >= deadline:
-                    raise RuntimeError("Controller did not report the requested configuration")
-                self._stop.wait(.001)
-            self.profile = parsed
-            self._metadata["control_profile"] = asdict(profile)
-            self._event("tianji.configure_sdk_returned", {"sdk_token": token, "profile_id": profile.profile_id})
+            self._command_cancel = cancel
+            try:
+                self._configure(profile, parsed, cancel)
+            except BaseException as error:
+                if cancel is not None and cancel.is_set():
+                    self.request_hold(str(error) or "Tianji configuration cancelled")
+                raise
+            finally:
+                self._command_cancel = None
+
+    def _configure(self, profile, parsed, cancel) -> None:
+        """Called with the command lock and cancellation routed to the SDK."""
+        self._check_cancelled(cancel, "configuration")
+        profiles = [parsed.arms.get(side) for side in SIDES]
+        token = self._next_token(f"configure-{uuid.uuid4().hex}")
+        self._event("tianji.configure_requested", {"sdk_token": token, "profile": asdict(profile)})
+        submitted = self._invoke("configure", self._mask(parsed.active_arms), profiles, token=token)
+        expected = {}
+        for side, arm in parsed.arms.items():
+            expected[side] = {
+                "cart_k": (*arm.stiffness, arm.nullspace_stiffness),
+                "cart_d": (*arm.damping, arm.nullspace_damping),
+                "tool_pose": (0.,) * 6, "tool_dynamics": arm.tool_dyn10,
+                "impedance_rotation": (0.,) * 7,
+            }
+        deadline = time.monotonic_ns() + self.engagement_timeout_ns
+        while True:
+            self._check_cancelled(cancel, "configuration")
+            self._connected()
+            self._require_feedback(parsed.active_arms)
+            packet = self._packet
+            confirmed = all(self._advanced.get(side, 0) > submitted for side in parsed.active_arms)
+            for side, channels in expected.items():
+                index, arm = SIDES.index(side), parsed.arms[side]
+                confirmed &= (packet.velocity_ratio[index] == arm.velocity_ratio
+                              and packet.acceleration_ratio[index] == arm.acceleration_ratio
+                              and packet.force_type[index] == 1)
+                for name, values in channels.items():
+                    width = len(values)
+                    confirmed &= tuple(getattr(packet, name)[index*width:(index+1)*width]) == tuple(
+                        ct.c_float(value).value for value in values)
+            if confirmed:
+                break
+            if time.monotonic_ns() >= deadline:
+                raise RuntimeError("Controller did not report the requested configuration")
+            self._stop.wait(.001)
+        self._check_cancelled(cancel, "configuration")
+        self.profile = parsed
+        self._metadata["control_profile"] = asdict(profile)
+        self._event("tianji.configure_sdk_returned", {"sdk_token": token, "profile_id": profile.profile_id})
+        self._check_cancelled(cancel, "configuration")
 
     def move_joints(self, side: Side, target_rad: tuple[float, ...], *,
                     cancel=None, timeout_s=60.) -> Sample[TianjiFrame]:
@@ -783,62 +804,78 @@ class TianjiDriver:
                 self._moving_side = None
                 self._command_cancel = None
 
-    def engage(self) -> None:
+    def engage(self, *, cancel=None) -> None:
         """Seed Cartesian impedance control from fresh measured joints."""
         with self._lock:
+            self._check_cancelled(cancel, "engagement")
             self._connected()
             if self.profile is None:
                 raise RuntimeError("A configured profile is required before engage")
             if self.engaged or self._clearing_errors or self._moving_side is not None:
                 raise RuntimeError("Tianji is already engaged or performing maintenance")
-            self._require_feedback(self.profile.active_arms)
-            sample = self.get_latest()
-            targets = {side: sample.payload.arms[side].joints.position_rad for side in self.profile.active_arms}
-            now = time.monotonic_ns()
-            command = DeviceCommand("tianji", f"engage-{uuid.uuid4().hex}", TianjiJointCommand(targets, {}),
-                                    (sample.header.ref,), now, now + self.engagement_timeout_ns, self.profile.profile_id)
-            self._motion_fault = None
-            self._mode_confirmed = False
-            self._control_mode = "cartesian"
-            result = self._send_command(command, "engage")
-            if not result.accepted:
-                raise RuntimeError(result.reason)
-            # The accepted seed begins a new motion episode. A later mode
-            # confirmation failure must record this episode's own stop cause.
-            self._motion_stop = None
-            self.engaged = True
-            self.engagement_sample = sample
-            self._hold_returned_ns, self._held_feedback = None, False
-            self._hold_sides = ()
-            self._mode_confirmed = False
-            while time.monotonic_ns() < self._deadline_ns:
-                if self._closing.is_set():
-                    raise RuntimeError("Tianji engagement cancelled by shutdown")
-                # engage owns the command lock while waiting, so the watchdog
-                # thread cannot issue hold here. Check feedback in this loop too.
-                reason = self._problem or self._motion_fault or self._feedback_problem(
-                    self.profile.active_arms, time.monotonic_ns())
-                if reason:
-                    self.request_hold(reason)
-                    raise RuntimeError(f"Cannot confirm cartesian engagement: {reason}")
-                latest = self.get_latest()
-                if all(self._advanced.get(side, 0) >= now and self._in_control_mode(latest.payload.arms[side])
-                       for side in self.profile.active_arms):
-                    # The measured seed holds the current pose, so retain the
-                    # startup grace period until the first planned target is
-                    # accepted.  Starting the runtime watchdog here made one
-                    # dual-arm IK cycle consume most or all of its budget.
-                    confirmed_ns = time.monotonic_ns()
-                    self._mode_confirmed = True
-                    self._event("tianji.engagement_mode_reported", {"packet_index": latest.payload.packet_index,
-                                                                 "command_id": command.command_id,
-                                                                 "control_mode": "cartesian",
-                                                                 "elapsed_ms": (confirmed_ns - now) / 1e6,
-                                                                 "first_target_deadline_ns": self._deadline_ns})
-                    return
-                self._stop.wait(0.001)
-            self.request_hold("Engagement mode was not reported before the startup deadline")
-            raise RuntimeError("Controller did not confirm cartesian engagement before startup timeout")
+            self._command_cancel = cancel
+            try:
+                self._engage(cancel)
+            except BaseException as error:
+                # request_hold clears _command_cancel before issuing a measured
+                # hold, so cancelling enablement cannot suppress the stop.
+                self.request_hold(str(error) or "Tianji engagement cancelled")
+                raise
+            finally:
+                self._command_cancel = None
+
+    def _engage(self, cancel) -> None:
+        """Called with the command lock; feedback reception remains independent."""
+        self._check_cancelled(cancel, "engagement")
+        self._require_feedback(self.profile.active_arms)
+        sample = self.get_latest()
+        targets = {side: sample.payload.arms[side].joints.position_rad for side in self.profile.active_arms}
+        now = time.monotonic_ns()
+        command = DeviceCommand("tianji", f"engage-{uuid.uuid4().hex}", TianjiJointCommand(targets, {}),
+                                (sample.header.ref,), now, now + self.engagement_timeout_ns, self.profile.profile_id)
+        self._motion_fault = None
+        self._mode_confirmed = False
+        self._control_mode = "cartesian"
+        result = self._send_command(command, "engage")
+        if not result.accepted:
+            raise RuntimeError(result.reason)
+        # The accepted seed begins a new motion episode. A later mode
+        # confirmation failure must record this episode's own stop cause.
+        self._motion_stop = None
+        self.engaged = True
+        self.engagement_sample = sample
+        self._hold_returned_ns, self._held_feedback = None, False
+        self._hold_sides = ()
+        self._mode_confirmed = False
+        while time.monotonic_ns() < self._deadline_ns:
+            self._check_cancelled(cancel, "engagement")
+            # engage owns the command lock while waiting, so the watchdog
+            # thread cannot issue hold here. Check feedback in this loop too.
+            reason = self._problem or self._motion_fault or self._feedback_problem(
+                self.profile.active_arms, time.monotonic_ns())
+            if reason:
+                self.request_hold(reason)
+                raise RuntimeError(f"Cannot confirm cartesian engagement: {reason}")
+            latest = self.get_latest()
+            if all(self._advanced.get(side, 0) >= now and self._in_control_mode(latest.payload.arms[side])
+                   for side in self.profile.active_arms):
+                # The measured seed holds the current pose, so retain the
+                # startup grace period until the first planned target is
+                # accepted.  Starting the runtime watchdog here made one
+                # dual-arm IK cycle consume most or all of its budget.
+                confirmed_ns = time.monotonic_ns()
+                self._check_cancelled(cancel, "engagement")
+                self._mode_confirmed = True
+                self._event("tianji.engagement_mode_reported", {"packet_index": latest.payload.packet_index,
+                                                             "command_id": command.command_id,
+                                                             "control_mode": "cartesian",
+                                                             "elapsed_ms": (confirmed_ns - now) / 1e6,
+                                                             "first_target_deadline_ns": self._deadline_ns})
+                self._check_cancelled(cancel, "engagement")
+                return
+            self._stop.wait(0.001)
+        self.request_hold("Engagement mode was not reported before the startup deadline")
+        raise RuntimeError("Controller did not confirm cartesian engagement before startup timeout")
 
     def submit(self, command: DeviceCommand[TianjiJointCommand]) -> Submission:
         with self._lock:

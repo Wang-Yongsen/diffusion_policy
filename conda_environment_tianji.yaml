@@ -2,7 +2,7 @@ name: tianji-rail-diffusion-policy
 # 在项目根目录执行 PYTHONNOUSERSITE=1 PIP_USER=false conda env create -f conda_environment_tianji.yaml。
 # 创建阶段也需禁用用户级包，避免 pip 误用 ~/.local 中的依赖。
 # 环境按 name 创建到 Conda 默认目录；真机评估需要的设备代码和 SDK 随 third_party 保存。
-# 仅覆盖天机训练和评估；采集、整理及转换使用 bimanual-teleop 项目的环境。
+# 覆盖天机训练、评估及 FoundationPose 导轨接料；采集、整理及转换使用 bimanual-teleop 项目的环境。
 channels:
   - conda-forge
   - nodefaults
@@ -15,6 +15,17 @@ dependencies:
   - cuda-version=12.9
   - pytorch=2.7.1=cuda129_mkl_py310_hecdad2d_304
   - torchvision=0.22.1=cuda129_py310_h0345b57_1
+  # FoundationPose 官方 Conda 编译依赖；CUDA 编译版本与上述 PyTorch 一致。
+  - cmake=4.2.3
+  - ninja=1.13.2
+  - eigen=5.0.1
+  - boost-cpp=1.85
+  - pybind11=3.1.0
+  - cxx-compiler
+  - cuda-nvcc=12.9
+  - cuda-libraries-dev=12.9
+  - cuda-cccl=12.9
+  - tbb=2021.13.0
   - pip:
     - torch==2.7.1
     - torchvision==0.22.1
@@ -28,7 +39,7 @@ dependencies:
     - numcodecs==0.13.1
     - av==16.1.0
     - pyrealsense2==2.58.4.10922
-    - wuji-sdk==2026.8.31
+    - wuji-sdk==2026.10.12
     - quadprog==0.1.13
     - rich==14.3.4
     - PyYAML==6.0.3
@@ -51,6 +62,28 @@ dependencies:
     - psutil==5.9.2
     - click==8.1.8
     - termcolor==2.5.0
+    # FoundationPose 官方依赖的 DP 兼容版本；GPU 扩展需随后按安装记录构建。
+    - scikit-learn==1.7.2
+    - joblib==1.6.0
+    - ruamel.yaml==0.19.1
+    - open3d==0.20.0
+    - trimesh==5.2.0
+    - transformations==2025.1.1
+    - pyrender==0.1.45
+    - PyOpenGL==3.1.0
+    - PyOpenGL_accelerate==3.1.10
+    - kornia==0.8.2
+    - omegaconf>=2.3
+    - warp-lang==1.18.0
+    - scikit-image==0.25.2
+    - iopath==0.1.10
+    # CNOS CAD segmentation; retain the existing Torch/CUDA versions.
+    - pytorch-lightning==1.8.6
+    - torchmetrics==0.10.3
+    - pycocotools==2.0.11
+    - segment-anything @ git+https://github.com/facebookresearch/segment-anything.git@dca509fe793f601edb92606367a655c15ac00fdf
+    - bop-toolkit-lib @ git+https://github.com/thodan/bop_toolkit.git@cea62d651c7e395b2e1962b9749e4e89693c6ac4
+    - pypng==0.20220715.0
     - -e .
 variables:
   PIP_USER: "false"

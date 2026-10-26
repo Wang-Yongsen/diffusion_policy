@@ -20,13 +20,13 @@ state_hz: 100
 history_s: 2.0
 # 推理模式；入口 --inference-mode 可覆盖。
 # async：推理与执行并行，动作保持观测锚点的计划时刻，过期步骤丢弃。
-# sync：推理期间保持上一目标；返回的 n_action_steps 步从提交时刻重新计时并全部执行，执行完再取新观测。
+# sync：按序号消费整块，三路设备成功下发当前步后才推进；完成后按 checkpoint 取最新可对齐的单步或两步观测。
 inference_mode: async
 # 仅 async：两次重规划的最短间隔为 replanning_steps / policy_hz 秒；30 Hz时原宽松试验用2。
 replanning_steps: 1
 # 下发前保留的时间裕量（秒）；过期动作直接丢弃。
 submit_margin_s: 0.01
-# 图像年龄、低维反馈年龄、相邻状态插值间隔上限（秒）。
+# 最新图像/反馈年龄、观测锚点年龄及相邻状态插值间隔上限（秒）。
 max_camera_age_s: 0.15
 max_state_age_s: 0.08
 max_state_gap_s: 0.05
@@ -39,10 +39,9 @@ max_position_jump_m: 0.1
 max_rotation_jump_rad: 0.45
 max_hand_jump_rad: 1.2
 # 相邻策略目标按真实时间间隔检查速度；双臂还有原执行器的关节约束。
-# max_hand_speed_rad_s 同时限制运行时手指速度，放宽后手指实际动得更快。
+# 手指不做速度校验或运行时限速，直接下发目标；关节范围与跳变校验仍生效。
 max_position_speed_m_s: 1.2
 max_rotation_speed_rad_s: 4.0
-max_hand_speed_rad_s: 8.0
 # 关节版：每个机械臂关节相对开始姿态/上一目标的最大跳变（弧度）和速度上限（弧度/秒）。
 # 演示数据中指令关节领先实测关节最多0.50 rad，关节最大速度0.70 rad/s；超限的预测整段拒绝。
 # 实际运动另受 arm_config 的 velocity_ratio／acceleration_ratio 及关节、腕部耦合限位约束。
@@ -58,8 +57,8 @@ workspace:
   right:
     min: [-1000.0, -1000.0, -1000.0]
     max: [1000.0, 1000.0, 1000.0]
-# 每次试验超时（秒）；启动不会自动回位或张手。
-trial_timeout_s: 30.0
+# 每次试验可选时限（秒）；null 表示不自动结束，由操作员手动暂停或结束。
+trial_timeout_s: null
 # 新建评估目录，已有目录拒绝覆盖。默认只记录预测、调度、下发计时、暂停和结果。
 # 入口 --record-observations 额外保存模型输入的低维状态、最多 6 个图像窗口，以及 30 Hz 实测位姿。
 output_dir: data/real_eval

@@ -30,6 +30,8 @@ def load_deployment_config(path, overrides=()):
     with Path(path).open() as file:
         config = apply_overrides(yaml.safe_load(file), overrides)
     for key, value in config.items():
+        if key == "trial_timeout_s" and value is None:
+            continue
         if key.endswith(("_s", "_hz", "_rad", "_m", "_m_s", "_rad_s")):
             if (
                 isinstance(value, bool)

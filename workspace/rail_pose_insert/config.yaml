@@ -5,11 +5,15 @@ mesh: ../../third_party/foundationpose/workspace/input/model/rail.obj
 urdf: ../../third_party/rail_assets/generated/robot.urdf
 manifest: ../../third_party/rail_assets/generated/manifest.json
 foundationpose_root: ../../third_party/foundationpose
-# null: use the named Conda environment; an explicit Python path is also supported.
+# null: use the active Python interpreter shared with DP.
 foundationpose_python: null
-foundationpose_env: foundationpose
 calibration: calibrations/head_to_left_base.json
 target: targets/rail_goal.json
+pose_alignment:
+  mesh_sha256: 6ed2b18a9c21ac8f958113fec38d25be3d26ab7b7af4046eb5ec861651ca5c36
+  center_cad_m: [0.00000482, 0.239999995, -0.004112245]
+  max_axis_rotation_deg: 45.0
+  typical_axis_rotation_deg: 30.0
 hand_reference: hand_profiles/rail_place3_left.json
 open_label: open_reference
 grasp_label: left_hold_primary

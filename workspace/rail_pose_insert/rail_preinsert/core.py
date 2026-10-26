@@ -53,10 +53,10 @@ def matrix(pose):
     return T
 
 
-def pose(T):
+def pose(T, side="left"):
     from diffusion_policy.third_party.bimanual_teleop.types import Pose
     T = transform(T)
-    return Pose("tianji_left_base", "tianji_left_flange", tuple(T[:3, 3]),
+    return Pose(f"tianji_{side}_base", f"tianji_{side}_flange", tuple(T[:3, 3]),
                 tuple(Rotation.from_matrix(T[:3, :3]).as_quat()))
 
 
@@ -64,6 +64,10 @@ def difference(a, b):
     a, b = transform(a), transform(b)
     return (float(np.linalg.norm(a[:3, 3] - b[:3, 3])),
             float(Rotation.from_matrix(a[:3, :3] @ b[:3, :3].T).magnitude()))
+
+
+class PoseStabilityError(ValueError):
+    """Valid poses disagree beyond the requested multi-frame tolerance."""
 
 
 def mean_pose(poses, max_translation_m=.005, max_rotation_rad=.035):
@@ -75,7 +79,7 @@ def mean_pose(poses, max_translation_m=.005, max_rotation_rad=.035):
     result[:3, :3] = Rotation.from_matrix(poses[:, :3, :3]).mean().as_matrix()
     errors = [difference(p, result) for p in poses]
     if max(e[0] for e in errors) > max_translation_m or max(e[1] for e in errors) > max_rotation_rad:
-        raise ValueError("Stationary pose observations disagree; reinitialize and inspect CAD direction")
+        raise PoseStabilityError("Stationary pose observations disagree; reinitialize and inspect CAD direction")
     return result
 
 

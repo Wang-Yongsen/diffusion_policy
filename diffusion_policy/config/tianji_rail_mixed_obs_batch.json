@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-19",
+  "status": "prepared_not_executed",
+  "freeze_root": "../../data/tianji_rail_final_batch_20261018",
+  "physical_slots": 2,
+  "execution_scope": "full_segment",
+  "checkpoint_sha256": "575b901e0aa801437046789d3ae626969943043f0d8a2307acb88d4b158286d3",
+  "model": {
+    "state_dict": "ema_model",
+    "policy_hz": 30,
+    "n_obs_steps": 2,
+    "n_action_steps": 8,
+    "ddim_steps": 8,
+    "device": "cuda:0"
+  },
+  "limits": {
+    "active_duration_s": null,
+    "max_decisions": null,
+    "automatic_replacement_slots": 0,
+    "automatic_hardware_start": false
+  },
+  "slots": [
+    {
+      "slot_id": "M01",
+      "kind": "mixed_observation",
+      "condition": "ER",
+      "name": "dataset_images_live_state",
+      "repeat": 1,
+      "seed": 42,
+      "observation_mode": "dataset-images-live-state",
+      "initialization_mode": "current_pose",
+      "visual_candidate": false,
+      "stable_sampling": false
+    },
+    {
+      "slot_id": "M02",
+      "kind": "mixed_observation",
+      "condition": "RE",
+      "name": "live_images_dataset_state",
+      "repeat": 1,
+      "seed": 42,
+      "observation_mode": "live-images-dataset-state",
+      "initialization_mode": "current_pose",
+      "visual_candidate": false,
+      "stable_sampling": false
+    }
+  ],
+  "comparison_rules": {
+    "state_fields": ["robot_eef_pose", "hand_joint"],
+    "camera_fields": ["camera_0", "camera_1", "camera_2"],
+    "uniform_initialization": false,
+    "return_to_initial_pose": false,
+    "initialization_check_required": false,
+    "skip_approach": true,
+    "dataset_episode": "0",
+    "dataset_window_starts": "0, 8, 16, ...; advance only after a fully executed chunk",
+    "live_window": "latest aligned two-step window after the previous chunk completes",
+    "missing_live_input": "wait while holding; never fall back to dataset input",
+    "normal_stop": "end of the selected dataset segment; trim the last action chunk to remaining frames",
+    "label_error_is_task_success": false
+  }
+}

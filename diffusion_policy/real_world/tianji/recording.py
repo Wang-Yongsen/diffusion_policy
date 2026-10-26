@@ -27,7 +27,8 @@ def json_value(value):
 
 def write_json(path, value):
     Path(path).write_text(
-        json.dumps(value, default=json_value, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        json.dumps(value, default=json_value, ensure_ascii=False, indent=2, allow_nan=False)
+        + "\n"
     )
 
 
@@ -46,8 +47,13 @@ def timing_report(path):
                     "preprocess_inference_transfer_ms",
                     (item["returned_ns"] - item["started_ns"]) / 1e6,
                 )
+                dataset_input = item.get("alignment", {}).get("observation_source") == "dataset"
                 add(
-                    "observation_age_at_prediction_return_ms",
+                    (
+                        "dataset_read_to_prediction_return_ms"
+                        if dataset_input
+                        else "observation_age_at_prediction_return_ms"
+                    ),
                     (item["returned_ns"] - item["anchor_ns"]) / 1e6,
                 )
                 # Older sessions only contain the combined duration above.
@@ -59,12 +65,15 @@ def timing_report(path):
                 ):
                     if start in item and end in item:
                         add(name, (item[end] - item[start]) / 1e6)
-                add(
-                    "observation_age_at_processing_start_ms",
-                    (item["started_ns"] - item["anchor_ns"]) / 1e6,
-                )
+                if not dataset_input:
+                    add(
+                        "observation_age_at_processing_start_ms",
+                        (item["started_ns"] - item["anchor_ns"]) / 1e6,
+                    )
                 if item.get("chunk_completed_ns") is not None:
-                    add("sync_hold_ms", (item["returned_ns"] - item["chunk_completed_ns"]) / 1e6)
+                    add(
+                        "sync_hold_ms", (item["returned_ns"] - item["chunk_completed_ns"]) / 1e6
+                    )
             elif event == "submission":
                 control = item.get("side") or item["kind"]
                 add(
@@ -164,7 +173,9 @@ class TrialRecorder:
                         np.savez_compressed(self.path / filename, **arrays)
                         item["file"] = filename
                     file.write(
-                        json.dumps(item, default=json_value, ensure_ascii=False, allow_nan=False)
+                        json.dumps(
+                            item, default=json_value, ensure_ascii=False, allow_nan=False
+                        )
                         + "\n"
                     )
         except Exception as error:

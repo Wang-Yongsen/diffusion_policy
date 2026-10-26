@@ -1,0 +1,162 @@
+{
+  "frame_id": "00001512",
+  "timestamp_ns": 73723812966839,
+  "frame": "T_C_CAD: original CAD coordinates to OpenCV camera coordinates",
+  "valid": true,
+  "mode": "track",
+  "T_C_CAD": [
+    [
+      -0.08552662283182144,
+      -0.9963077902793884,
+      0.007488902658224106,
+      0.3493785262107849
+    ],
+    [
+      -0.5500828623771667,
+      0.040951408445835114,
+      -0.834105372428894,
+      -0.06603940576314926
+    ],
+    [
+      0.8307190537452698,
+      -0.07545769214630127,
+      -0.5515542030334473,
+      0.7352943420410156
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "translation_m": [
+    0.3493785262107849,
+    -0.06603940576314926,
+    0.7352943420410156
+  ],
+  "quaternion_xyzw": [
+    -0.5968827823070628,
+    0.6476944168777669,
+    -0.3510772621713265,
+    -0.31775405979630644
+  ],
+  "processing_s": 0.04507685999851674,
+  "pose_batch_size": 8,
+  "candidate_count": 252,
+  "torch_peak_allocated_mib": 176.0849609375,
+  "torch_peak_reserved_mib": 306.0,
+  "pose_snapshot": "cycle_2/pose.png",
+  "camera_serial": "405622076394",
+  "mesh_sha256": "6ed2b18a9c21ac8f958113fec38d25be3d26ab7b7af4046eb5ec861651ca5c36",
+  "replay_only": true,
+  "generation": "cycle_2",
+  "context_epoch": 2,
+  "timestamp_source": "sdk_global_timestamp_mapped_to_host_monotonic",
+  "output_monotonic_ns": 73723885106320,
+  "T_C_CAD_raw": [
+    [
+      -0.08552662283182144,
+      -0.9963077902793884,
+      0.007488902658224106,
+      0.3493785262107849
+    ],
+    [
+      -0.5500828623771667,
+      0.040951408445835114,
+      -0.834105372428894,
+      -0.06603940576314926
+    ],
+    [
+      0.8307190537452698,
+      -0.07545769214630127,
+      -0.5515542030334473,
+      0.7352943420410156
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "pose_alignment": {
+    "hypothesis": "identity",
+    "approximate_symmetry": true,
+    "center_cad_m": [
+      4.82e-06,
+      0.239999995,
+      -0.004112245
+    ],
+    "T_CAD_raw_CAD_aligned": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "relative_xyz_deg": [
+      1.1548006591630517,
+      9.129670952536,
+      4.830631616328743
+    ],
+    "raw_relative_xyz_deg": [
+      1.1548006591630517,
+      9.129670952536,
+      4.830631616328743
+    ],
+    "rotation_error_deg": 10.347829294485622,
+    "max_axis_rotation_deg": 45.0,
+    "within_limit": true,
+    "within_typical_range": true
+  },
+  "diagnostic_only": true,
+  "source_record": "/home/yuchen/project/diffusion_policy/plan/2026-10-25-SAM框提示验证数据.json",
+  "source_rgb": "/tmp/sam-prompt-offline-scene/rgb/00001512.png",
+  "K": [
+    [
+      388.1229248046875,
+      0.0,
+      332.01959228515625
+    ],
+    [
+      0.0,
+      387.6435852050781,
+      260.2157897949219
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "crop_xyxy": [
+    214,
+    151,
+    571,
+    291
+  ],
+  "crop_scale": 2,
+  "rendered_pose": "aligned_only",
+  "full_image": "/home/yuchen/project/diffusion_policy/plan/2026-10-25-导轨调整后位姿-全图.png",
+  "detail_image": "/home/yuchen/project/diffusion_policy/plan/2026-10-25-导轨调整后位姿.png"
+}

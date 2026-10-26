@@ -7,6 +7,7 @@
 | 目录职责、验证、命令迁移 | [开发](development.md) |
 | 设备配置、单位、停止行为 | [设备运行](device-runtime.md) |
 | 历史输入差异实验结论 | [实验摘要](results.md) |
+| 当前参考与合并前资料归档 | [参考](reference.md) |
 
 训练和评估使用 `tianji-rail-diffusion-policy`；采集、整理与转换使用
 [bimanual-teleop](../../../bimanual-teleop/docs/recording_guide.md)。

@@ -12,7 +12,9 @@
     "2026-10-14: removed offline finalization/conversion CLI, spool/storage code and its unused console/affinity helpers; retained camera/config/sink for live observation",
     "2026-10-16: synced camera ordering from bimanual-teleop 284b1e311b13d81e5bb65b68f96c4e3da7ab7c6f; camera_1 is the robot left arm with its RGB rotated 180 degrees, camera_2 is the robot right arm, and camera metadata records image_rotation_deg",
     "2026-10-23: added URDF RobotModel from the source sim/kinematics.py, replacing deferred simulation imports with NumPy/SciPy; no simulator dependency",
-    "2026-10-23: resolve host configuration through diffusion_policy.config so relocated checkouts work from either their root or parent directory"
+    "2026-10-23: resolve host configuration through diffusion_policy.config so relocated checkouts work from either their root or parent directory",
+    "2026-10-19: upgraded the Wuji SDK pin and runtime version check from 2026.8.31 to 2026.10.12",
+    "2026-10-25: add optional cancellation to Tianji configuration and Cartesian engagement for force-insertion handover; preserve measured hold after cancellation"
   ],
   "files": [
     {
@@ -43,7 +45,7 @@
     {
       "path": "bimanual_teleop/control/arm/cartesian.py",
       "source_sha256": "d41eb18ecf686d19ca4b3a03d088fb0f144292747eebcd630b42f0ae551bdd61",
-      "vendored_sha256": "b57473654d6ad1102e02b85553ef1e4bea8ecd9492cebfce23f4884a70f921cd"
+      "vendored_sha256": "1555276bc839ad55f29c1bb1b310be2e12b47796b9838035e12d8efc8cfb5891"
     },
     {
       "path": "bimanual_teleop/control/arm/servo.py",
@@ -73,7 +75,7 @@
     {
       "path": "bimanual_teleop/devices/tianji/driver.py",
       "source_sha256": "c31298a67a86d8c2629e33a3626fb5a11dbc01bc7dc5a28a8c5a8b180281133f",
-      "vendored_sha256": "4ea0445a08015c6ed0764c8448ecff3bac7f60d2063ec0f35b69da74d518bd76"
+      "vendored_sha256": "66fdd38c2164631fc9f642d859caa36b7a187d15e80fd2c05f8994c87743ac39"
     },
     {
       "path": "bimanual_teleop/devices/tianji/model.py",
@@ -93,7 +95,7 @@
     {
       "path": "bimanual_teleop/devices/wuji/adapter.py",
       "source_sha256": "1d1cb077f88c8b63ffb5e4c718d3fe146257300014c3e99ff48bb7a95a47fa0d",
-      "vendored_sha256": "47a4bb0ff3880fbfb7663bc0adf076867e5ac61689b3ef6cc2e48c2d57de7804"
+      "vendored_sha256": "5bf10ba7de9ddd2cb8c95a43fb53c2a6da4562fa732e69b5d3a13e4ae3ab6de6"
     },
     {
       "path": "bimanual_teleop/devices/wuji/config.py",

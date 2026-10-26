@@ -1,0 +1,209 @@
+{
+  "scope": "Nominal geometry audit, not physical measurement. No robot command issued.",
+  "fixture_source": "/home/yuchen/Documents/xwechat_files/wxid_yt421e5n3x2i22_2d53/msg/file/2026-10/导轨台_第八版.step",
+  "fixture_sha256": "5b56f599cf9e559cab9cb93c5accbc848349be7b8e52e1d113b82d27d71abedd",
+  "fixture_units": "mm",
+  "fixture_representation": {
+    "solid_count": 1,
+    "planar_triangle_face_count": 39362,
+    "analytic_cylinders": 0
+  },
+  "fixture_bbox_cad_mm": [
+    -147.0923690795,
+    61.84582138061326,
+    -110.1540279388,
+    154.3950805664002,
+    154.09708882600628,
+    -10.154027938764798
+  ],
+  "support_reference_cad_y_mm": 139.86536965149455,
+  "support_note": "Area-weighted near-horizontal top patches; faceted and non-flat. Reference only, not an exact seating plane.",
+  "pins": [
+    {
+      "label": "A (CAD X < 0)",
+      "diameter_fitted_mm": 6.18130835450566,
+      "top_center_cad_mm": [
+        -127.9232071159319,
+        153.56371617489253,
+        -61.29830896015739
+      ],
+      "axis_cad": [
+        2.6642524969085113e-13,
+        0.9999921338630609,
+        -0.003966385256345684
+      ],
+      "axis_at_reference_support_cad_mm": [
+        -127.92320711593555,
+        139.86536965149455,
+        -61.243975613077126
+      ],
+      "top_height_above_reference_support_mm": 13.698346523397987,
+      "top_max_height_above_reference_support_mm": 13.710604348505456,
+      "top_rim_vertex_count": 32,
+      "top_rim_max_plane_residual_mm": 6.2584489878886595e-06,
+      "top_rim_max_radius_residual_mm": 2.486816946145609e-06,
+      "top_chamfer_modeled": false,
+      "base_flare_present": true,
+      "section_checks": [
+        {
+          "cad_y_mm": 140,
+          "height_above_reference_support_mm": 0.1346303485054534,
+          "minimum_vertex_radius_mm": 3.0742721359068703,
+          "maximum_vertex_radius_mm": 4.369758298210849
+        },
+        {
+          "cad_y_mm": 140.5,
+          "height_above_reference_support_mm": 0.6346303485054534,
+          "minimum_vertex_radius_mm": 3.074242819407991,
+          "maximum_vertex_radius_mm": 4.0170095966440575
+        },
+        {
+          "cad_y_mm": 141,
+          "height_above_reference_support_mm": 1.1346303485054534,
+          "minimum_vertex_radius_mm": 3.0743055365390197,
+          "maximum_vertex_radius_mm": 3.4004830353538638
+        },
+        {
+          "cad_y_mm": 141.5,
+          "height_above_reference_support_mm": 1.6346303485054534,
+          "minimum_vertex_radius_mm": 3.074227842500897,
+          "maximum_vertex_radius_mm": 3.090679718534736
+        },
+        {
+          "cad_y_mm": 142,
+          "height_above_reference_support_mm": 2.1346303485054534,
+          "minimum_vertex_radius_mm": 3.074230023572849,
+          "maximum_vertex_radius_mm": 3.090679612805625
+        },
+        {
+          "cad_y_mm": 145,
+          "height_above_reference_support_mm": 5.134630348505453,
+          "minimum_vertex_radius_mm": 3.0742253828319313,
+          "maximum_vertex_radius_mm": 3.0906789784309026
+        }
+      ]
+    },
+    {
+      "label": "B (CAD X > 0)",
+      "diameter_fitted_mm": 6.682392184600603,
+      "top_center_cad_mm": [
+        137.07679276509378,
+        154.08383818612563,
+        -61.666149918549245
+      ],
+      "axis_cad": [
+        -1.3246444843682985e-13,
+        0.9999921366954827,
+        -0.00396567109109458
+      ],
+      "axis_at_reference_support_cad_mm": [
+        137.07679276509566,
+        139.86536965149455,
+        -61.609763705539855
+      ],
+      "top_height_above_reference_support_mm": 14.218468534631086,
+      "top_max_height_above_reference_support_mm": 14.231719178505443,
+      "top_rim_vertex_count": 32,
+      "top_rim_max_plane_residual_mm": 6.564367613351394e-06,
+      "top_rim_max_radius_residual_mm": 2.8840403891727817e-06,
+      "top_chamfer_modeled": false,
+      "base_flare_present": true,
+      "section_checks": [
+        {
+          "cad_y_mm": 140,
+          "height_above_reference_support_mm": 0.1346303485054534,
+          "minimum_vertex_radius_mm": 3.323432404647818,
+          "maximum_vertex_radius_mm": 4.873809906536795
+        },
+        {
+          "cad_y_mm": 140.5,
+          "height_above_reference_support_mm": 0.6346303485054534,
+          "minimum_vertex_radius_mm": 3.3234396967722577,
+          "maximum_vertex_radius_mm": 4.521151148395148
+        },
+        {
+          "cad_y_mm": 141,
+          "height_above_reference_support_mm": 1.1346303485054534,
+          "minimum_vertex_radius_mm": 3.323445278562959,
+          "maximum_vertex_radius_mm": 3.902791099365329
+        },
+        {
+          "cad_y_mm": 141.5,
+          "height_above_reference_support_mm": 1.6346303485054534,
+          "minimum_vertex_radius_mm": 3.3234527156933367,
+          "maximum_vertex_radius_mm": 3.5750657618252584
+        },
+        {
+          "cad_y_mm": 142,
+          "height_above_reference_support_mm": 2.1346303485054534,
+          "minimum_vertex_radius_mm": 3.323446315139255,
+          "maximum_vertex_radius_mm": 3.3412307167493935
+        },
+        {
+          "cad_y_mm": 145,
+          "height_above_reference_support_mm": 5.134630348505453,
+          "minimum_vertex_radius_mm": 3.323445425627462,
+          "maximum_vertex_radius_mm": 3.34122854793997
+        }
+      ]
+    }
+  ],
+  "pin_spacing_at_reference_support_mm": 265.0002523354933,
+  "rail_source": "/home/yuchen/project/diffusion_policy/third_party/rail_assets/source/导轨长.SLDPRT",
+  "rail_source_sha256": "267b6f4a03520018bdf3a790be0e7c459e42ffa09ad93bb61d0349da05f54519",
+  "rail_audit": "/home/yuchen/project/diffusion_policy/third_party/foundationpose/workspace/input/model/rail-cad-audit.json",
+  "rail_source_matches_foundationpose": true,
+  "rail_in_provided_step": false,
+  "physical_rail_matches_source": "unverified",
+  "holes_from_existing_rail_model": [
+    {
+      "analytic_face_id": 2178,
+      "diameter_mm": 8.899999999999999,
+      "center_rail_cad_mm": [
+        0.0,
+        102.0,
+        -16.1090627486111
+      ],
+      "wall_z_interval_rail_cad_mm": [
+        -16.9667517638392,
+        -15.251373733383002
+      ],
+      "wall_axial_length_mm": 1.7153780304561965,
+      "mesh_fit_diameters_mm": [
+        8.89999899498883,
+        8.89999899498883
+      ],
+      "mouth_chamfer_modeled": false
+    },
+    {
+      "analytic_face_id": 1987,
+      "diameter_mm": 8.000000000000002,
+      "center_rail_cad_mm": [
+        -0.06525182861356373,
+        367.0,
+        -16.1090627486111
+      ],
+      "wall_z_interval_rail_cad_mm": [
+        -16.9667517638392,
+        -15.251373733383002
+      ],
+      "wall_axial_length_mm": 1.7153780304561965,
+      "mesh_fit_diameters_mm": [
+        8.00000350318453,
+        8.00000350318453
+      ],
+      "mouth_chamfer_modeled": false
+    }
+  ],
+  "hole_center_spacing_mm": 265.00000803358694,
+  "conditional_min_radial_clearance_mm": 0.6588039076996992,
+  "conditional_min_radial_clearance_note": "Smallest hole minus largest shaft, divided by 2. Straight shaft only; actual pairing, base flare, tolerances and contact geometry must be considered.",
+  "limitations": [
+    "No engineering manufacturing tolerances identified in STEP.",
+    "CAD axes are not robot base_link axes.",
+    "Exposed pin height is not certified usable insertion travel. Base flares can interfere before nominal support contact.",
+    "Wall contact length is approximately 1.715 mm, not the 13.7/14.2 mm exposed pin height.",
+    "No chamfer present in inspected model regions does not prove no physical deburring or chamfer.",
+    "Rail end-to-pin pairing is not established by the fixture-only STEP."
+  ]
+}

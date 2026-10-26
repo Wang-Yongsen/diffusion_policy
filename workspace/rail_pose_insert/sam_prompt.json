@@ -1,0 +1,15 @@
+{
+  "image_size": [
+    640,
+    480
+  ],
+  "camera_serial": "405622076394",
+  "box_xyxy": [
+    269,
+    142,
+    573,
+    222
+  ],
+  "point_coords": [],
+  "point_labels": []
+}
