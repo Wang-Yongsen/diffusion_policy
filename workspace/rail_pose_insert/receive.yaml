@@ -8,10 +8,10 @@ calibration: calibrations/head_to_left_base.json
 mesh: ../../third_party/foundationpose/workspace/input/model/rail.obj
 foundationpose_root: ../../third_party/foundationpose
 foundationpose_python: null
-# Set once with: python workspace/rail_pose_insert/set_sam_prompt.py
+# Draw at the two actual positions: python workspace/rail_pose_insert/insert_spiral.py --draw-bboxes
 sam_prompt: sam_prompt.json
+sam_prompt_preplace: sam_prompt_preplace.json
 perception_timeout_s: 180.0
-grasp_mode: auto
 grasp_delay_s: 5.0
 post_grasp_pose_delay_s: 8.0
 # Fixed reference: original right ready_pose.target_deg in tianji_teleop.yaml.
@@ -19,7 +19,13 @@ post_grasp_pose_delay_s: 8.0
 initial_reference_joints_deg: [-30, -60, 34, -52, -30, 12, -4]
 # Right SDK base: -Z is toward the robot's left (inward).
 initial_offset_base_m: [0.0, 0.0, -0.15]
-# Coarse receiving startup under impedance control; independent of insertion/transport accuracy.
+# Position-spiral startup returns the left arm directly to this fixed target first.
+# Left SDK base: +Z is toward the robot's left (outward). Never offset feedback.
+left_initial_pose:
+  reference_joints_deg: [30, -60, -34, -52, 30, 12, 4]
+  offset_base_m: [0.0, 0.0, 0.15]
+# Startup uses SDK position control and measured arrival, then engages impedance
+# at the measured pose. Independent of insertion/transport accuracy.
 initial_position_tolerance_m: 0.005
 initial_rotation_tolerance_rad: 0.05235987756 # 3 degrees
 # Candidate settings, requiring a supported-rail trial before carrying a load.
@@ -29,29 +35,14 @@ hand_settle_s: 0.5
 hand_settle_timeout_s: 10.0
 state_max_age_s: 0.1
 arm_tracking_error_rad: 0.035
-# Legacy Cartesian-path guard. M transfer uses SDK position mode and arrival checks.
-arm_tracking_error_timeout_s: 0.5
-arm_tracking_hard_error_rad: 0.07
 velocity_ratio: 3
 acceleration_ratio: 3
 jog_step_m: 0.001
 jog_step_rad: 0.00872664626
 # Original CAD Y runs from 0 to 0.48 m. This is the mid-rail cross section.
 rail_midpoint_cad_m: [0, 0.24, -0.004]
-# Nominal palm receiving volume in the prepared URDF. Tune with a supported rail.
-grasp_link: r_wrist
-grasp_center_link_m: [0, -0.025, -0.065]
-grasp_half_extents_m: [0.045, 0.045, 0.055]
-# User-marked red box, in camera pixels (excluding the viewer's 39 px toolbar).
-# Fixed in the rectified main-camera image; never follows the arm.
 receive_image_size: [640, 480]
-receive_roi_xyxy: [360, 88, 622, 220]
-detection_duration_s: 1.0
-detection_max_age_s: 3.0
-detection_max_gap_s: 2.0
-cnos_detection:
-  # Mirrors the upstream config; the adapter verifies it, rather than overriding CNOS.
-  confidence_threshold: 0.15
+context_publish_period_s: 0.05
 observation_max_age_s: 1.0
 # Whole robot base_link, NOT either SDK arm base or sim_world.
 # CAD +Z: open face up; CAD +/-X: front/back; CAD +/-Y: left/right.
@@ -74,30 +65,15 @@ pose_alignment:
   center_cad_m: [0.00000482, 0.239999995, -0.004112245]
   max_axis_rotation_deg: 45.0
   typical_axis_rotation_deg: 30.0
-# Legacy offline pose replay settings; live receiving uses CNOS above.
-automatic_detection:
-  context_max_age_s: 0.25
-  context_publish_period_s: 0.05
-  search_period_s: 0.25
-  retry_delay_s: 1.0
-  search_margin_m: 0.08
-  center_margin_m: 0.08
-  proposal_depth_tolerance_m: 0.015
-  min_pixels: 64
-  min_visible_fraction: 0.55
-  max_length_ratio: 1.2
-  max_width_ratio: 1.8
-  min_elongation: 4.0
 # Receive, estimate once, then M moves using the saved mean. pose-only disables transfer.
 # +Y in the right SDK base is up.
 move_above:
   target: targets/rail_goal.json
-  start_mode: manual  # manual: cache the mean and wait for M; auto: start if stable.
   height_m: 0.015  # Pre-insertion pose: 15 mm above the taught assembly goal.
   samples: 3
   # Maximum per-sample position deviation from the 3-frame mean.
   pose_consistency_position_tolerance_m: 0.010
-  # Used for startup Cartesian references; M transfer uses SDK ratio settings above.
+  # Offline planner timing; SDK position moves use the ratio settings above.
   joint_speed_rad_s: 0.08
   joint_acceleration_rad_s2: 0.15
   planning_timeout_s: 60.0
@@ -106,38 +82,12 @@ move_above:
   rotation_tolerance_rad: 0.01745329252
   settle_s: 0.5
   reach_timeout_s: 30.0
-  # Above-goal visual verification applies to force_spiral and position_steps only.
-  visual_position_tolerance_m: 0.005
-  visual_rotation_tolerance_rad: 0.035
-
-# N after above-goal arrival starts the selected insertion mode; keep grasp.
-# force_spiral and legacy position_steps require above-goal visual verification.
-# position_spiral re-registers the rail and actively corrects the preplacement pose.
-lowering:
-  mode: force_spiral
-  step_m: 0.005
-  velocity_ratio: 1
-  acceleration_ratio: 1
-  position_tolerance_m: 0.001
-  rotation_tolerance_rad: 0.01745329252
-  lateral_tolerance_m: 0.003
-  overshoot_tolerance_m: 0.001
-  settle_s: 0.2
-  step_timeout_s: 20.0
-  max_joint_step_rad: 0.05
-
-# Active visual correction only for position_spiral, before N starts insertion.
-# False keeps the optional mechanical-arrival-only workflow.
+# One visual correction above the goal; wait for N before insertion.
 preplace_alignment:
-  enabled: true
   samples: 3
-  max_corrections: 3
-  visual_position_tolerance_m: 0.002
-  visual_rotation_tolerance_rad: 0.017453292519943295
   consistency_position_m: 0.003
   consistency_rotation_rad: 0.017453292519943295
-  max_correction_m: 0.04
-  max_correction_rad: 0.17453292519943295
+  # Correct the full measured residual; feasibility is checked per planned segment.
   max_step_m: 0.002
   max_rotation_step_rad: 0.008726646259971648
   max_joint_step_rad: 0.05
@@ -159,7 +109,7 @@ preplace_alignment:
 # zero then shrinks back to zero at the taught goal. These are trial parameters,
 # not contact limits; no contact detection or automatic unloading is performed.
 position_spiral:
-  radius_m: 0.001
+  radius_m: 0.003
   turns: 3
   max_step_m: 0.0005
   velocity_ratio: 1
@@ -174,65 +124,13 @@ position_spiral:
   max_joint_step_rad: 0.05
   max_descent_m: 0.06
 
-# Field measurements are intentionally unset: N lists missing fields and refuses
-# insertion until complete. Receiving and M transfer remain available.
-# Forces: N; torques: Nm; lengths: m; rotations: rad; speeds: m/s.
-insertion:
-  # Kunwei sensor, flange-mounted; exact model and feedback frame remain unverified.
-  T_F_S: null  # 4x4 transform from documented force feedback frame/origin to flange.
-  wrench_sign: null  # +1 or -1; compensated wrench is external load on tool.
-  # Original rail CAD; midpoint of the Ø8.9/Ø8.0 hole-wall midplane centers.
-  # Faces 2178/1987, 265 mm spacing. See plan/2026-10-25-第八版装配台几何核对.md.
-  hole_midpoint_cad_m: [-0.00003262591430678186, 0.2345, -0.0161090627486111]
-  impedance:
-    stiffness: null  # Six SDK Cartesian stiffness values: XYZ then rotation XYZ.
-    damping: null  # Six SDK damping ratios within [0, 1].
-    nullspace_stiffness: null
-    nullspace_damping: null
-    velocity_ratio: null
-    acceleration_ratio: null
-  baseline_duration_s: 1.0
-  baseline_min_samples: 30
-  baseline_timeout_s: 5.0
-  state_max_age_s: 0.1
-  max_control_dt_s: 0.05
-  force_filter_tau_s: 0.05
-  contact_confirm_s: 0.1
-  candidate_confirm_s: 0.2
-  settle_s: 0.3
-  baseline_force_std_n: null
-  baseline_torque_std_nm: null
-  baseline_position_tolerance_m: null
-  orientation_tolerance_rad: null
-  hand_shape_tolerance_rad: null
-  max_reference_lead_m: null
-  max_tracking_error_m: null
-  approach_speed_m_s: null
-  insert_speed_m_s: null
-  retract_speed_m_s: null
-  admittance_m_s_n: null
-  contact_force_n: null
-  target_force_n: null
-  max_axial_force_n: null
-  max_lateral_force_n: null
-  max_tilt_torque_nm: null
-  hard_force_n: null
-  hard_torque_nm: null
-  raw_force_limit_n: null  # Optional absolute sensor limit, includes held load/bias.
-  raw_torque_limit_nm: null  # Optional absolute sensor limit.
-  pitch_m: null
-  max_radius_m: null
-  lateral_speed_m_s: null
-  candidate_depth_m: null
-  candidate_force_drop_n: null
-  candidate_confirm_depth_m: null
-  candidate_timeout_s: null
-  max_descent_m: null  # Includes the full above-goal approach distance.
-  endpoint_tolerance_m: null
-  progress_epsilon_m: null
-  stall_timeout_s: null
-  phase_timeout_s: null
-  total_timeout_s: null
-  retract_timeout_s: null
-  retract_unload_force_n: null
-  retract_unload_torque_nm: null
+# After insertion: open the hand, lift the empty flange along +Y, return to ready.
+# Reuse move_above arrival/settling/planning/move timeouts and the fixed initial pose.
+release_return:
+  lift_height_m: 0.15
+  lift_step_m: 0.005
+  max_joint_step_rad: 0.05
+  path_tolerance_m: 0.005
+  velocity_ratio: 1
+  acceleration_ratio: 1
+  total_timeout_s: 600.0

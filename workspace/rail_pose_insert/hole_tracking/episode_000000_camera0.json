@@ -1,0 +1,23 @@
+{
+  "description": "Numeric bboxes for camera_0 frame960 (32.000 video seconds); coordinates refer to 640x480 original RGB.",
+  "episode_sha256": "d925d2487cccbcd91c8ee78eaae8ca0c4238ac243b2b636d0a422ca49418ac7d",
+  "seed_frame": 960,
+  "bboxes_xyxy": [
+    [
+      258,
+      328,
+      272,
+      342
+    ],
+    [
+      407,
+      320,
+      421,
+      333
+    ]
+  ],
+  "settings": {
+    "depth_min_m": 0.6,
+    "depth_max_m": 0.76
+  }
+}

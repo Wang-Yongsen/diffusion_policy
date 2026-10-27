@@ -1,4 +1,5 @@
 """Nonblocking latest-observation bridge; perception never owns an actuator."""
+
 from __future__ import annotations
 
 import os
@@ -7,8 +8,8 @@ import subprocess
 import time
 from uuid import uuid4
 
-from rail_preinsert.core import HERE, read_json, transform, write_json
-from rail_preinsert.perception import python_command
+from rail_common.core import HERE, read_json, transform, write_json
+from rail_common.perception import python_command
 
 
 class ReceivePerception:
@@ -21,13 +22,28 @@ class ReceivePerception:
         self.last_context_write = 0.0
         try:
             write_json(self.directory / "config.json", config)
-            write_json(self.directory / "request.json", {"id": self.generation, "command": "initialize"})
-            command = python_command(config) + [str(HERE / "receive_perception_worker.py"),
-                "--foundationpose-root", config["foundationpose_root"], "--mesh", config["mesh"],
-                "--camera-serial", serial, "--serve", str(self.directory),
-                "--config", str(self.directory / "config.json")]
-            env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
-            self.process = subprocess.Popen(command, stdout=self.log, stderr=subprocess.STDOUT, env=env)
+            write_json(
+                self.directory / "request.json", {"id": self.generation, "command": "initialize"}
+            )
+            command = python_command(config) + [
+                str(HERE / "receive_perception_worker.py"),
+                "--foundationpose-root",
+                config["foundationpose_root"],
+                "--mesh",
+                config["mesh"],
+                "--camera-serial",
+                serial,
+                "--serve",
+                str(self.directory),
+                "--config",
+                str(self.directory / "config.json"),
+            ]
+            env = dict(
+                os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1"
+            )
+            self.process = subprocess.Popen(
+                command, stdout=self.log, stderr=subprocess.STDOUT, env=env
+            )
             self.started = time.monotonic()
         except BaseException:
             self.close()
@@ -35,7 +51,10 @@ class ReceivePerception:
 
     def ready(self):
         if self.process.poll() is not None:
-            raise RuntimeError(f"Receiving perception stopped; inspect {self.directory / 'worker.log'}")
+            raise RuntimeError(
+                "Receiving perception stopped: "
+                + (self.directory / "worker.log").read_text(errors="replace")[-1500:]
+            )
         path = self.directory / "ready.json"
         if not path.is_file():
             if time.monotonic() - self.started > self.config["perception_timeout_s"]:
@@ -56,14 +75,14 @@ class ReceivePerception:
         write_json(self.directory / "request.json", dict(request, id=self.generation))
         return self.generation
 
-    def publish_context(self, state, T_C_G, *, enabled, epoch, mode="receive"):
+    def publish_context(self, state, *, enabled, epoch):
         now = time.monotonic()
-        if now-self.last_context_write < self.config["automatic_detection"]["context_publish_period_s"]:
+        if now - self.last_context_write < self.config["context_publish_period_s"]:
             return
-        write_json(self.directory / "context.json", {
-            "timestamp_ns": int(state["timestamp_ns"]),
-            "T_C_G": T_C_G.tolist(), "enabled": bool(enabled),
-            "epoch": epoch, "mode": mode})
+        write_json(
+            self.directory / "context.json",
+            {"timestamp_ns": int(state["timestamp_ns"]), "enabled": bool(enabled), "epoch": epoch},
+        )
         self.last_context_write = now
 
     def latest(self):

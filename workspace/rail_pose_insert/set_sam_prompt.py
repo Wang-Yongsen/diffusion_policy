@@ -1,11 +1,16 @@
-"""Set a fixed SAM box and optional points using only the rectified main camera."""
+"""Draw separate initial and above-table SAM prompts using only the main camera."""
 from __future__ import annotations
 
+import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+from zoneinfo import ZoneInfo
+
+from rail_receive.sam_prompt import PROMPT_KEYS, PROMPT_NAMES, load_prompt, prompt_path
 
 
 class PromptEditor:
@@ -110,13 +115,70 @@ class PromptEditor:
                 "point_labels": list(self.labels)}
 
 
-def _draw(cv2, rgb, editor):
+class DualPromptEditor:
+    """Two independent boxes on one frozen image."""
+
+    def __init__(self, image_size, prompts=None):
+        self.editors = {stage: PromptEditor(image_size, (prompts or {}).get(stage))
+                        for stage in PROMPT_KEYS}
+        self.stage = "initial"
+
+    @property
+    def current(self):
+        return self.editors[self.stage]
+
+    def select(self, stage):
+        if stage not in self.editors:
+            raise ValueError(f"Unknown SAM prompt stage: {stage}")
+        self.current.drag_start = self.current.drag_end = None
+        self.stage = stage
+
+    def freeze(self):
+        for editor in self.editors.values():
+            editor.freeze()
+
+    def records(self, serial):
+        records = {}
+        for stage, editor in self.editors.items():
+            try:
+                records[stage] = editor.record(serial)
+            except ValueError:
+                raise ValueError(f"请先画好{PROMPT_NAMES[stage]}，按 1/2 切换；两个框都完成后再保存。") from None
+        return records
+
+
+def clear_saved_prompts(config):
+    """Remove both active prompts, retaining their files in a dated backup."""
+    stamp = datetime.now(ZoneInfo("Asia/Singapore")).strftime("%Y%m%d_%H%M%S_%f")
+    backups = {}
+    for stage in PROMPT_KEYS:
+        path = prompt_path(config, stage)
+        if path.is_file():
+            backup = path.parent / "sam_prompt_backups" / stamp / path.name
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            path.replace(backup)
+            backups[stage] = backup
+    return backups
+
+
+def _draw(cv2, rgb, editor, *, stage=None, companion=None, dual=False):
     canvas = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    if companion is not None and companion.box is not None:
+        x1, y1, x2, y2 = map(int, companion.box)
+        cv2.rectangle(canvas, (x1, y1), (min(x2, editor.width-1), min(y2, editor.height-1)),
+                      (230, 180, 70), 1)
+        other = "ABOVE TABLE" if stage == "initial" else "INITIAL"
+        cv2.putText(canvas, other, (x1+4, max(16, y1-7)), cv2.FONT_HERSHEY_SIMPLEX,
+                    .45, (230, 180, 70), 1, cv2.LINE_AA)
     box = editor.display_box
     if box is not None:
         x1, y1, x2, y2 = [int(v) for v in box]
         cv2.rectangle(canvas, (x1, y1), (min(x2, editor.width-1), min(y2, editor.height-1)),
                       (0, 220, 255), 2)
+        if stage:
+            cv2.putText(canvas, "INITIAL" if stage == "initial" else "ABOVE TABLE",
+                        (x1+4, max(16, y1-7)), cv2.FONT_HERSHEY_SIMPLEX, .45,
+                        (0, 220, 255), 1, cv2.LINE_AA)
     for point, label in zip(editor.points, editor.labels):
         position = tuple(int(v) for v in point)
         color = (60, 235, 60) if label else (50, 50, 245)
@@ -125,10 +187,16 @@ def _draw(cv2, rgb, editor):
         cv2.putText(canvas, "+" if label else "-", (position[0]+8, position[1]+4),
                     cv2.FONT_HERSHEY_SIMPLEX, .55, color, 2)
     canvas = cv2.copyMakeBorder(canvas, 34, 114, 0, 0, cv2.BORDER_CONSTANT, value=(24, 24, 24))
-    lines = [("FROZEN - edit prompt" if editor.frozen else "LIVE - existing prompt is preview only", 23),
-             ("SPACE: fresh frame + clear all | drag left: box (when no box)", editor.height+57),
+    title = "FROZEN - edit prompt" if editor.frozen else "LIVE - existing prompt is preview only"
+    if stage:
+        title = ("FROZEN" if editor.frozen else "LIVE") + " | editing: " + (
+            "1 INITIAL" if stage == "initial" else "2 ABOVE TABLE")
+    lines = [(title, 23),
+             (("SPACE: fresh frame + clear current | 1 initial | 2 above table" if dual else
+               "SPACE: fresh frame + clear all | drag left: box (when no box)"), editor.height+57),
              ("After box: left +rail | right -hand | Z undo | C clear points", editor.height+81),
-             ("B redraw box | ENTER save | Q / ESC cancel", editor.height+105),
+             (("B redraw current | R clear BOTH | ENTER save BOTH | Q/ESC cancel" if dual else
+               "B redraw box | ENTER save | Q / ESC cancel"), editor.height+105),
              (editor.status, editor.height+132)]
     for text, y in lines:
         cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, .47, (235, 235, 235), 1,
@@ -153,39 +221,49 @@ def _save_prompt(path, record):
             temporary.unlink(missing_ok=True)
 
 
-def main():
-    from rail_preinsert.core import read_json
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reset", action="store_true", help="备份并清除两个已保存的旧框，再重新绘制")
+    args = parser.parse_args(argv)
+    from rail_common.core import read_json
     from rail_receive.logic import load_config
-    from rail_receive.sam_prompt import load_prompt
 
     config = load_config(Path(__file__).with_name("receive.yaml"))
     serial = read_json(config["calibration"])["camera_serial"]
     size = config["receive_image_size"]
-    prompt_path = Path(config["sam_prompt"])
-    prompt = None
-    if prompt_path.is_file():
-        try:
-            prompt = load_prompt(prompt_path, size, camera_serial=serial)
-            print(f"已加载提示：{prompt_path}；初始只预览，空格重拍会清空旧框和点。", flush=True)
-        except (ValueError, KeyError, OSError) as error:
-            print(f"已有提示不能使用：{error}；请重新框选，保存前不会覆盖原文件。", flush=True)
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise RuntimeError("需要在有图形桌面的本机终端运行 SAM 提示设置窗口。")
+    if args.reset:
+        for stage, backup in clear_saved_prompts(config).items():
+            print(f"已清除{PROMPT_NAMES[stage]}；旧文件备份到：{backup}", flush=True)
+    prompts = {}
+    for stage in PROMPT_KEYS:
+        path = prompt_path(config, stage)
+        if not path.is_file():
+            continue
+        try:
+            prompts[stage] = load_prompt(path, size, camera_serial=serial)
+            print(f"已加载{PROMPT_NAMES[stage]}：{path}；空格重拍会清空两个框和所有点。", flush=True)
+        except (ValueError, KeyError, OSError) as error:
+            print(f"{PROMPT_NAMES[stage]}不能使用：{error}；请重新框选。", flush=True)
     root = Path(config["foundationpose_root"])
     sys.path[:0] = [str(root), str(root / "workspace/src")]
-    from perception_worker import Camera
+    from rail_common.camera import Camera
     import cv2
 
     print("只读取主视相机，不连接机械臂或灵巧手。\n"
-          "空格：冻结/重拍并清空全部提示；左键拖框：大致包围整根可见导轨。\n"
+          "空格：冻结/重拍并清空当前框；首次冻结时清空两个旧框；左键拖框。\n"
+          "1：初始分割框；2：导轨台上方分割框。画完第一个框后按 2 画第二个框。\n"
           "选框后左键点击加正点（导轨），右键点击加负点（手）；点必须在框内。\n"
-          "Z：撤销最后一个点；C：清空点；B：重画框；Enter：保存；Q/Esc：取消。\n"
-          "框提示可以单独保存，不必添加点。固定提示只适用于导轨仍位于该范围的画面。", flush=True)
-    editor, camera, frozen = PromptEditor(size, prompt), None, None
-    title = "Rail SAM prompt - main camera only"
+          "Z：撤销最后一点；C：清当前框的点；B：重画当前框；R：清空两个框。\n"
+          "Enter：两个框都画好后一起保存；Q/Esc：取消本次编辑。\n"
+          "两个框都可不添加点；固定提示不跟随导轨移动。", flush=True)
+    pair, camera, frozen = DualPromptEditor(size, prompts), None, None
+    title = "Rail SAM prompts - 1 INITIAL / 2 ABOVE TABLE"
     cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
 
     def mouse(event, x, y, flags, userdata):
+        editor = pair.current
         # The 34-pixel header is display-only; saved coordinates refer to RGB.
         y -= 34
         if event == cv2.EVENT_LBUTTONUP:
@@ -205,14 +283,24 @@ def main():
             rgb = camera.frame().rgb
             if list(rgb.shape[1::-1]) != list(size):
                 raise ValueError("主视相机图像尺寸与 receive_image_size 不一致。")
-            cv2.imshow(title, _draw(cv2, rgb if frozen is None else frozen, editor))
+            editor = pair.current
+            other = pair.editors["preplace" if pair.stage == "initial" else "initial"]
+            cv2.imshow(title, _draw(cv2, rgb if frozen is None else frozen, editor,
+                                   stage=pair.stage, companion=other, dual=True))
             key = cv2.waitKey(1) & 0xff
             if key in (ord("q"), ord("Q"), 27) or cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
-                print("已取消，原提示文件未修改。", flush=True)
+                print("已取消，未保存新框。" + ("旧框已备份并清除。" if args.reset else "原提示文件未修改。"), flush=True)
                 return 0
             if key == ord(" "):
+                if frozen is None:
+                    pair.freeze()
+                else:
+                    editor.freeze()
                 frozen = rgb.copy()
-                editor.freeze()
+            elif key in (ord("1"), ord("2")):
+                pair.select("initial" if key == ord("1") else "preplace")
+            elif key in (ord("r"), ord("R")) and frozen is not None:
+                pair.freeze()
             elif key in (ord("b"), ord("B")):
                 editor.redraw_box()
             elif key in (ord("c"), ord("C")):
@@ -221,15 +309,17 @@ def main():
                 editor.undo()
             elif key in (10, 13):
                 try:
-                    record = editor.record(serial)
+                    records = pair.records(serial)
                 except ValueError as error:
-                    editor.status = "Freeze with SPACE, then drag a valid box before saving"
+                    editor.status = "Draw BOTH boxes first: 1 initial / 2 above table"
                     print(str(error), flush=True)
                     continue
-                _save_prompt(prompt_path, record)
-                print(f"已保存 SAM 提示：{prompt_path}\n"
-                      f"范围框：{record['box_xyxy']}；正点 {record['point_labels'].count(1)} 个，"
-                      f"负点 {record['point_labels'].count(0)} 个。", flush=True)
+                for stage, record in records.items():
+                    path = prompt_path(config, stage)
+                    _save_prompt(path, record)
+                    print(f"已保存{PROMPT_NAMES[stage]}：{path}\n"
+                          f"范围框：{record['box_xyxy']}；正点 {record['point_labels'].count(1)} 个，"
+                          f"负点 {record['point_labels'].count(0)} 个。", flush=True)
                 return 0
     finally:
         if camera is not None:

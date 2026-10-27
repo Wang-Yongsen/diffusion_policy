@@ -46,7 +46,7 @@ python -m diffusion_policy.cli.tianji --help
 | `docs/tianji-rail/` | 当前操作说明 |
 | `tests/` | 离线回归 |
 | `third_party/` | 设备 SDK、FoundationPose 源码、任务模型及标定工具 |
-| `workspace/` | [导轨预插入实验](workspace/rail_pose_insert/README.md)，依赖已内置 |
+| `workspace/` | [FoundationPose 导轨插入](workspace/rail_pose_insert/README.md)，依赖已内置 |
 | `plan/` | 实施计划 |
 
 ## 上游
